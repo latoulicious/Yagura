@@ -1,12 +1,15 @@
+mod alert;
 mod api;
 mod collector;
 mod db;
 mod docker;
+mod host;
+mod probe;
 
 use crate::collector::{Collector, Sample};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, mpsc};
 
 const TICK_SECS: u64 = 5;
 
@@ -21,13 +24,21 @@ async fn main() -> anyhow::Result<()> {
     let db_read = Arc::new(Mutex::new(db::open_read(&db_path)?));
     let (events, _) = broadcast::channel::<Sample>(256);
     let docker = Arc::new(docker::DockerCollector::connect()?);
+    let host = Arc::new(host::HostCollector::new());
+    let http = reqwest::Client::builder().build()?;
 
-    spawn_collector(docker.clone(), writer, events.clone());
+    let thresholds = alert::spawn_thresholds(http.clone());
+    spawn_collector(docker.clone(), host, writer.clone(), events.clone(), thresholds);
+
+    let alerts = alert::spawn(http.clone());
+    let prober = Arc::new(probe::ProbeCollector::new(http, db::open_read(&db_path)?));
+    spawn_prober(prober, writer.clone(), events.clone(), alerts);
 
     let app = api::router(api::AppState {
         docker,
         db_read,
         events,
+        db_write: writer,
     });
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     tracing::info!("yagura listening on {bind}");
@@ -35,21 +46,94 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Tick loop: collect each interval, fan every sample to the writer + broadcast.
+/// Tick loop: collect docker + host each interval, fan every sample to the writer
+/// + broadcast, and feed host disk/ram into the threshold alerter.
 fn spawn_collector(
     docker: Arc<docker::DockerCollector>,
-    writer: tokio::sync::mpsc::Sender<Sample>,
+    host: Arc<host::HostCollector>,
+    writer: mpsc::Sender<db::DbMsg>,
     events: broadcast::Sender<Sample>,
+    thresholds: mpsc::Sender<alert::ThresholdReading>,
 ) {
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(Duration::from_secs(TICK_SECS));
         loop {
             tick.tick().await;
             for s in docker.collect().await {
-                // Live fan-out first so SSE never waits on the DB write.
-                let _ = events.send(s.clone());
-                if let Err(e) = writer.send(s).await {
-                    tracing::warn!("sample write dropped: {e}");
+                fan(&events, &writer, s).await;
+            }
+            let host_samples = host.collect().await;
+            send_thresholds(&thresholds, &host_samples).await;
+            for s in host_samples {
+                fan(&events, &writer, s).await;
+            }
+        }
+    });
+}
+
+/// One sample out: broadcast first so SSE never waits on the DB write.
+async fn fan(events: &broadcast::Sender<Sample>, writer: &mpsc::Sender<db::DbMsg>, s: Sample) {
+    let _ = events.send(s.clone());
+    if let Err(e) = writer.send(db::DbMsg::Sample(s)).await {
+        tracing::warn!("sample write dropped: {e}");
+    }
+}
+
+/// Derive disk%/ram% from this tick's host samples and feed the threshold alerter.
+async fn send_thresholds(tx: &mpsc::Sender<alert::ThresholdReading>, samples: &[Sample]) {
+    let Some(ts) = samples.first().map(|s| s.ts) else {
+        return;
+    };
+    let v = |metric: &str| samples.iter().find(|s| s.metric == metric).map(|s| s.value);
+    let reading = |key, used: Option<f64>, total: Option<f64>, limit| match (used, total) {
+        (Some(u), Some(t)) => Some(alert::ThresholdReading {
+            key,
+            pct: host::pct(u, t),
+            limit,
+            ts,
+        }),
+        _ => None,
+    };
+    let readings = [
+        reading("disk", v("disk_used"), v("disk_total"), alert::DISK_LIMIT_PCT),
+        reading("ram", v("mem_used"), v("mem_total"), alert::RAM_LIMIT_PCT),
+    ];
+    for r in readings.into_iter().flatten() {
+        let _ = tx.send(r).await;
+    }
+}
+
+/// Probe tick loop: each result fans out live (as `check:<id>` samples), to the
+/// alerter, then to the writer.
+fn spawn_prober(
+    prober: Arc<probe::ProbeCollector>,
+    writer: mpsc::Sender<db::DbMsg>,
+    events: broadcast::Sender<Sample>,
+    alerts: mpsc::Sender<collector::CheckResult>,
+) {
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(Duration::from_secs(TICK_SECS));
+        loop {
+            tick.tick().await;
+            for r in prober.collect().await {
+                let src = format!("check:{}", r.check_id);
+                let _ = events.send(Sample {
+                    ts: r.ts,
+                    source: src.clone(),
+                    metric: "up".into(),
+                    value: r.up as i64 as f64,
+                });
+                if let Some(ms) = r.latency_ms {
+                    let _ = events.send(Sample {
+                        ts: r.ts,
+                        source: src,
+                        metric: "latency_ms".into(),
+                        value: ms as f64,
+                    });
+                }
+                let _ = alerts.send(r.clone()).await;
+                if let Err(e) = writer.send(db::DbMsg::Result(r)).await {
+                    tracing::warn!("check result write dropped: {e}");
                 }
             }
         }

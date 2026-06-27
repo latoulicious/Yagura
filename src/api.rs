@@ -1,20 +1,20 @@
 use crate::collector::Sample;
 use crate::db;
 use crate::docker::DockerCollector;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{StatusCode, Uri, header};
 use axum::response::IntoResponse;
 use axum::response::sse::{Event, KeepAlive, Sse};
-use axum::routing::get;
+use axum::routing::{delete, get};
 use axum::{Json, Router};
 use futures_util::{Stream, StreamExt};
 use rusqlite::Connection;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, mpsc};
 use tokio_stream::wrappers::BroadcastStream;
 
 const KEEPALIVE_SECS: u64 = 15;
@@ -26,6 +26,7 @@ pub struct AppState {
     // read concurrency ever matters (it won't at this traffic level).
     pub db_read: Arc<Mutex<Connection>>,
     pub events: broadcast::Sender<Sample>,
+    pub db_write: mpsc::Sender<db::DbMsg>,
 }
 
 pub fn router(state: AppState) -> Router {
@@ -33,6 +34,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/overview", get(overview))
         .route("/api/logs/{id}", get(logs))
         .route("/api/stream", get(stream))
+        .route("/api/checks", get(checks_list).post(checks_create))
+        .route("/api/checks/{id}", delete(checks_delete))
+        .route("/api/checks/{id}/history", get(checks_history))
+        .route("/api/host/history", get(host_history))
         .fallback(static_handler)
         .with_state(state)
 }
@@ -64,8 +69,13 @@ async fn overview(State(st): State<AppState>) -> Result<impl IntoResponse, Statu
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)??;
 
     let mut map: HashMap<(String, String), f64> = HashMap::new();
+    let mut host = serde_json::Map::new();
     for s in latest {
-        map.insert((s.source, s.metric), s.value);
+        if s.source == "host" {
+            host.insert(s.metric, serde_json::json!(s.value));
+        } else {
+            map.insert((s.source, s.metric), s.value);
+        }
     }
 
     let rows: Vec<ContainerRow> = containers
@@ -84,7 +94,28 @@ async fn overview(State(st): State<AppState>) -> Result<impl IntoResponse, Statu
         })
         .collect();
 
-    Ok(Json(serde_json::json!({ "containers": rows })))
+    Ok(Json(serde_json::json!({ "containers": rows, "host": host })))
+}
+
+/// Host metric sparklines: 48h of samples downsampled into 30-min buckets,
+/// keyed by metric (`{ cpu: [{ts,value}…], mem_used: […], … }`). One request
+/// covers every section, so the Overview tab doesn't fan out N polls.
+async fn host_history(State(st): State<AppState>) -> Result<impl IntoResponse, StatusCode> {
+    let db = st.db_read.clone();
+    let pts = tokio::task::spawn_blocking(move || {
+        let conn = db.lock().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        db::host_history(&conn).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)??;
+
+    let mut out: HashMap<String, Vec<serde_json::Value>> = HashMap::new();
+    for p in pts {
+        out.entry(p.metric)
+            .or_default()
+            .push(serde_json::json!({ "ts": p.ts, "value": p.value }));
+    }
+    Ok(Json(out))
 }
 
 /// SSE: live log stream for one container.
@@ -111,6 +142,80 @@ async fn stream(State(st): State<AppState>) -> Sse<impl Stream<Item = Result<Eve
         Some(Ok(Event::default().data(json)))
     });
     Sse::new(body).keep_alive(KeepAlive::new().interval(Duration::from_secs(KEEPALIVE_SECS)))
+}
+
+/// Probe list: each check merged with its latest result + last-down time.
+async fn checks_list(State(st): State<AppState>) -> Result<impl IntoResponse, StatusCode> {
+    let db = st.db_read.clone();
+    let rows = tokio::task::spawn_blocking(move || {
+        let conn = db.lock().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        db::list_checks(&conn).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)??;
+    Ok(Json(rows))
+}
+
+#[derive(Deserialize)]
+struct NewCheckReq {
+    kind: String,
+    target: String,
+    interval_s: i64,
+    enabled: Option<bool>,
+}
+
+/// Create a probe. Validates kind/target/interval at the trust boundary.
+async fn checks_create(
+    State(st): State<AppState>,
+    Json(req): Json<NewCheckReq>,
+) -> Result<impl IntoResponse, StatusCode> {
+    if !matches!(req.kind.as_str(), "http" | "tcp")
+        || req.target.trim().is_empty()
+        || req.interval_s < 5
+    {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let new = db::NewCheck {
+        kind: req.kind,
+        target: req.target.trim().to_string(),
+        interval_s: req.interval_s,
+        enabled: req.enabled.unwrap_or(true),
+    };
+    let id = db::add_check(&st.db_write, new)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok((StatusCode::CREATED, Json(serde_json::json!({ "id": id }))))
+}
+
+/// Delete a probe; 404 when nothing matched.
+async fn checks_delete(Path(id): Path<i64>, State(st): State<AppState>) -> StatusCode {
+    match db::del_check(&st.db_write, id).await {
+        Ok(0) => StatusCode::NOT_FOUND,
+        Ok(_) => StatusCode::NO_CONTENT,
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
+    }
+}
+
+#[derive(Deserialize)]
+struct HistoryQ {
+    limit: Option<i64>,
+}
+
+/// Recent results for one probe, oldest-first — the sparkline source.
+async fn checks_history(
+    Path(id): Path<i64>,
+    Query(q): Query<HistoryQ>,
+    State(st): State<AppState>,
+) -> Result<impl IntoResponse, StatusCode> {
+    let limit = q.limit.unwrap_or(100).clamp(1, 1000);
+    let db = st.db_read.clone();
+    let rows = tokio::task::spawn_blocking(move || {
+        let conn = db.lock().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        db::history(&conn, id, limit).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)??;
+    Ok(Json(rows))
 }
 
 #[derive(rust_embed::RustEmbed)]

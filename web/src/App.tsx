@@ -1,21 +1,33 @@
 import { useEffect, useState } from 'react'
-import { fetchOverview, type Container } from './api'
-import { Sidebar } from './components/Sidebar'
+import { Moon, Sun } from 'lucide-react'
+import { fetchOverview, type Container, type Host } from './api'
 import { LogView } from './components/LogView'
 import { Overview } from './components/Overview'
+import { Uptime } from './components/Uptime'
+import { usePersisted } from './usePersisted'
 
-type Tab = 'logs' | 'overview'
+type Tab = 'logs' | 'overview' | 'uptime'
 
 export function App() {
   const [containers, setContainers] = useState<Container[]>([])
+  const [host, setHost] = useState<Host>({})
   const [selected, setSelected] = useState<string | null>(null)
-  const [tab, setTab] = useState<Tab>('logs')
+  const [tab, setTab] = useState<Tab>('overview')
+  const [theme, setTheme] = usePersisted<'dark' | 'light'>('yagura.theme', 'light')
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+  }, [theme])
 
   useEffect(() => {
     let on = true
     const load = () =>
       fetchOverview()
-        .then((c) => on && setContainers(c))
+        .then((o) => {
+          if (!on) return
+          setContainers(o.containers)
+          setHost(o.host)
+        })
         .catch(() => {})
     load()
     const t = setInterval(load, 10000)
@@ -30,28 +42,46 @@ export function App() {
       setSelected(null)
       return
     }
-    // Re-select when nothing is chosen or the chosen container vanished.
     if (!selected || !containers.some((c) => c.id === selected)) {
       setSelected(containers.find((c) => c.state === 'running')?.id ?? containers[0].id)
     }
   }, [containers, selected])
 
   return (
-    <div className="flex h-full bg-bg text-text font-sans text-sm">
-      <Sidebar containers={containers} selected={selected} onSelect={setSelected} />
-      <main className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-12 shrink-0 items-center gap-1 border-b border-border px-4">
-          <span className="mr-4 font-mono text-xs uppercase tracking-widest text-text-3">
-            櫓 Yagura
-          </span>
-          <TabBtn active={tab === 'logs'} onClick={() => setTab('logs')}>
-            Logs
-          </TabBtn>
+    <div className="flex h-full flex-col bg-bg text-text font-sans text-sm">
+      <header className="shrink-0 border-b border-border">
+        <div className="flex h-11 items-center px-3">
+          <span className="font-mono text-xs uppercase tracking-widest text-text-3">櫓 Yagura</span>
+          <button
+            onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+            aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+            aria-pressed={theme === 'dark'}
+            className="ml-auto inline-flex size-8 items-center justify-center rounded-[2px] text-text-3 hover:bg-elevated hover:text-text"
+            title="Toggle theme"
+          >
+            {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
+          </button>
+        </div>
+        <div className="flex h-10 items-center gap-4 border-t border-border px-3">
           <TabBtn active={tab === 'overview'} onClick={() => setTab('overview')}>
             Overview
           </TabBtn>
-        </header>
-        {tab === 'logs' ? <LogView containerId={selected} /> : <Overview containers={containers} />}
+          <TabBtn active={tab === 'uptime'} onClick={() => setTab('uptime')}>
+            Uptime
+          </TabBtn>
+          <TabBtn active={tab === 'logs'} onClick={() => setTab('logs')}>
+            Logs
+          </TabBtn>
+        </div>
+      </header>
+      <main className="flex min-h-0 min-w-0 flex-1 flex-col">
+        {tab === 'logs' ? (
+          <LogView containers={containers} selected={selected} onSelect={setSelected} />
+        ) : tab === 'overview' ? (
+          <Overview containers={containers} host={host} />
+        ) : (
+          <Uptime />
+        )}
       </main>
     </div>
   )
@@ -69,8 +99,10 @@ function TabBtn({
   return (
     <button
       onClick={onClick}
-      className={`rounded px-3 py-1 text-sm ${
-        active ? 'bg-elevated text-text' : 'text-text-3 hover:text-text-2'
+      className={`inline-flex h-10 items-center border-b-2 px-1 text-sm ${
+        active
+          ? 'border-accent-primary text-text'
+          : 'border-transparent text-text-3 hover:text-text-2'
       }`}
     >
       {children}

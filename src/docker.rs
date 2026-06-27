@@ -78,6 +78,8 @@ impl DockerCollector {
 }
 
 impl Collector for DockerCollector {
+    type Out = Sample;
+
     async fn collect(&self) -> Vec<Sample> {
         let containers = match self.list().await {
             Ok(c) => c,
