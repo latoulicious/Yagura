@@ -37,6 +37,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/checks", get(checks_list).post(checks_create))
         .route("/api/checks/{id}", delete(checks_delete))
         .route("/api/checks/{id}/history", get(checks_history))
+        .route("/api/host/history", get(host_history))
         .fallback(static_handler)
         .with_state(state)
 }
@@ -68,8 +69,13 @@ async fn overview(State(st): State<AppState>) -> Result<impl IntoResponse, Statu
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)??;
 
     let mut map: HashMap<(String, String), f64> = HashMap::new();
+    let mut host = serde_json::Map::new();
     for s in latest {
-        map.insert((s.source, s.metric), s.value);
+        if s.source == "host" {
+            host.insert(s.metric, serde_json::json!(s.value));
+        } else {
+            map.insert((s.source, s.metric), s.value);
+        }
     }
 
     let rows: Vec<ContainerRow> = containers
@@ -88,7 +94,28 @@ async fn overview(State(st): State<AppState>) -> Result<impl IntoResponse, Statu
         })
         .collect();
 
-    Ok(Json(serde_json::json!({ "containers": rows })))
+    Ok(Json(serde_json::json!({ "containers": rows, "host": host })))
+}
+
+/// Host metric sparklines: 48h of samples downsampled into 30-min buckets,
+/// keyed by metric (`{ cpu: [{ts,value}…], mem_used: […], … }`). One request
+/// covers every section, so the Overview tab doesn't fan out N polls.
+async fn host_history(State(st): State<AppState>) -> Result<impl IntoResponse, StatusCode> {
+    let db = st.db_read.clone();
+    let pts = tokio::task::spawn_blocking(move || {
+        let conn = db.lock().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        db::host_history(&conn).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)??;
+
+    let mut out: HashMap<String, Vec<serde_json::Value>> = HashMap::new();
+    for p in pts {
+        out.entry(p.metric)
+            .or_default()
+            .push(serde_json::json!({ "ts": p.ts, "value": p.value }));
+    }
+    Ok(Json(out))
 }
 
 /// SSE: live log stream for one container.

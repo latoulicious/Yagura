@@ -1,0 +1,125 @@
+import { useEffect, useState } from 'react'
+import { Line, LineChart, ResponsiveContainer } from 'recharts'
+import {
+  fetchHostHistory,
+  fmtBytes,
+  fmtBytesPerSec,
+  fmtLoad,
+  fmtPct,
+  fmtUptime,
+  pct,
+  type Host,
+  type HostSeries,
+} from '../api'
+
+// Mirror the backend alert thresholds (alert.rs DISK_LIMIT_PCT / RAM_LIMIT_PCT):
+// breached numbers flip to the offline color. Calm until then.
+const DISK_LIMIT = 85
+const RAM_LIMIT = 90
+
+/// Curated host stats above the container grid — number + 48h sparkline per row.
+export function HostMetrics({ host: h }: { host: Host }) {
+  const [hist, setHist] = useState<HostSeries>({})
+
+  useEffect(() => {
+    let on = true
+    const load = () => fetchHostHistory().then((d) => on && setHist(d)).catch(() => {})
+    load()
+    const t = setInterval(load, 60000)
+    return () => {
+      on = false
+      clearInterval(t)
+    }
+  }, [])
+
+  const ser = (m: string) => hist[m]?.map((p) => p.value) ?? []
+  const memPct = pct(h.mem_used, h.mem_total)
+  const diskPct = pct(h.disk_used, h.disk_total)
+  const bytes2 = (used?: number, total?: number) => `${fmtBytes(used)} / ${fmtBytes(total)}`
+
+  return (
+    <div>
+      <div className="px-4 pb-1 pt-2 text-xs uppercase tracking-[0.08em] text-text-3">Host</div>
+      <Stat label="CPU" primary={fmtPct(h.cpu)} series={ser('cpu')} />
+      <Stat
+        label="Memory"
+        primary={fmtPct(memPct)}
+        secondary={bytes2(h.mem_used, h.mem_total)}
+        series={ser('mem_used')}
+        breach={(memPct ?? 0) > RAM_LIMIT}
+      />
+      <Stat
+        label="Swap"
+        primary={fmtPct(pct(h.swap_used, h.swap_total))}
+        secondary={bytes2(h.swap_used, h.swap_total)}
+        series={ser('swap_used')}
+      />
+      <Stat
+        label="Disk"
+        primary={fmtPct(diskPct)}
+        secondary={bytes2(h.disk_used, h.disk_total)}
+        series={ser('disk_used')}
+        breach={(diskPct ?? 0) > DISK_LIMIT}
+      />
+      <Stat label="Disk read" primary={fmtBytesPerSec(h.disk_read)} series={ser('disk_read')} />
+      <Stat label="Disk write" primary={fmtBytesPerSec(h.disk_write)} series={ser('disk_write')} />
+      <Stat label="Net rx" primary={fmtBytesPerSec(h.net_rx)} series={ser('net_rx')} />
+      <Stat label="Net tx" primary={fmtBytesPerSec(h.net_tx)} series={ser('net_tx')} />
+      <Stat
+        label="Load"
+        primary={fmtLoad(h.load1)}
+        secondary={`${fmtLoad(h.load5)} ${fmtLoad(h.load15)}`}
+        series={ser('load1')}
+      />
+      <Stat label="Uptime" primary={fmtUptime(h.uptime)} />
+    </div>
+  )
+}
+
+function Stat({
+  label,
+  primary,
+  secondary,
+  series,
+  breach,
+}: {
+  label: string
+  primary: string
+  secondary?: string
+  series?: number[]
+  breach?: boolean
+}) {
+  return (
+    <div className="flex h-10 items-center gap-4 px-4 hover:bg-elevated">
+      <div className="min-w-0 flex-1 text-text-2">{label}</div>
+      {series ? <Sparkline data={series} breach={breach} /> : <div className="h-6 w-24" />}
+      <div className="flex w-48 items-baseline justify-end gap-2 font-mono">
+        {secondary && <span className="text-xs text-text-3">{secondary}</span>}
+        <span className={breach ? 'font-medium text-offline' : 'text-text-2'}>{primary}</span>
+      </div>
+    </div>
+  )
+}
+
+// ponytail: host sparkline lives here rather than refactoring Uptime's identical
+// one (out of P3 scope); unify into a shared component if a third caller appears.
+function Sparkline({ data, breach }: { data: number[]; breach?: boolean }) {
+  if (data.length < 2) return <div className="h-6 w-24" />
+  const stroke = breach ? 'var(--color-offline)' : 'var(--color-text-3)'
+  return (
+    <div className="h-6 w-24">
+      <ResponsiveContainer width="100%" height="100%">
+        <LineChart data={data.map((v) => ({ v }))}>
+          <Line
+            type="monotone"
+            dataKey="v"
+            dot={false}
+            stroke={stroke}
+            strokeWidth={1.5}
+            isAnimationActive={false}
+          />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  )
+}

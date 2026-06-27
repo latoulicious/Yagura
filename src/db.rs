@@ -6,6 +6,8 @@ use tokio::sync::{mpsc, oneshot};
 
 const RETENTION_SECS: i64 = 48 * 3600;
 const TRIM_EVERY: u64 = 1000;
+// 30-min buckets → ~96 points across the 48h window for a calm sparkline.
+const HOST_BUCKET_S: i64 = 1800;
 
 // `samples` + `check_results` are the high-volume tables; `checks`/`events` are
 // config/log. Indexes mirror the read patterns (latest-per-key, per-id history).
@@ -54,6 +56,13 @@ pub struct ResultRow {
     pub ts: i64,
     pub up: bool,
     pub latency_ms: Option<i64>,
+}
+
+/// One downsampled host point — a metric's average over a 30-min bucket.
+pub struct HostPoint {
+    pub metric: String,
+    pub ts: i64,
+    pub value: f64,
 }
 
 /// Messages to the single writer task. Telemetry is fire-and-forget; CRUD carries
@@ -254,6 +263,25 @@ pub fn history(conn: &Connection, check_id: i64, limit: i64) -> Result<Vec<Resul
     Ok(v)
 }
 
+/// 48h of host samples, averaged into 30-min buckets per metric, oldest-first.
+/// Scans the indexed `source='host'` range — same class as `latest_samples`.
+pub fn host_history(conn: &Connection) -> Result<Vec<HostPoint>> {
+    let cutoff = now_ts() - RETENTION_SECS;
+    let mut stmt = conn.prepare(
+        "SELECT metric, (ts / ?1) * ?1 AS bucket, AVG(value) \
+         FROM samples WHERE source = 'host' AND ts >= ?2 \
+         GROUP BY metric, bucket ORDER BY bucket",
+    )?;
+    let rows = stmt.query_map(rusqlite::params![HOST_BUCKET_S, cutoff], |r| {
+        Ok(HostPoint {
+            metric: r.get(0)?,
+            ts: r.get(1)?,
+            value: r.get(2)?,
+        })
+    })?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -300,6 +328,34 @@ mod tests {
         assert_eq!(c2.up, None); // no results yet
         assert_eq!(c2.since, None);
         assert_eq!(c2.last_down, None);
+    }
+
+    fn insert_host(conn: &Connection, ts: i64, metric: &str, value: f64) {
+        conn.execute(
+            "INSERT INTO samples (ts, source, metric, value) VALUES (?1, 'host', ?2, ?3)",
+            rusqlite::params![ts, metric, value],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn host_history_buckets_and_averages() {
+        let conn = mem();
+        let base = (now_ts() / HOST_BUCKET_S) * HOST_BUCKET_S; // a bucket boundary, within 48h
+        insert_host(&conn, base + 10, "cpu", 10.0);
+        insert_host(&conn, base + 20, "cpu", 20.0); // same bucket as above
+        insert_host(&conn, base + HOST_BUCKET_S + 5, "cpu", 50.0); // next bucket
+
+        let pts: Vec<_> = host_history(&conn)
+            .unwrap()
+            .into_iter()
+            .filter(|p| p.metric == "cpu")
+            .collect();
+        assert_eq!(pts.len(), 2); // two buckets
+        assert_eq!(pts[0].ts, base);
+        assert!((pts[0].value - 15.0).abs() < 1e-9); // avg(10, 20)
+        assert_eq!(pts[1].ts, base + HOST_BUCKET_S);
+        assert!((pts[1].value - 50.0).abs() < 1e-9);
     }
 
     #[test]

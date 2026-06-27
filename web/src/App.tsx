@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Moon, Sun } from 'lucide-react'
-import { fetchOverview, type Container } from './api'
+import { fetchOverview, type Container, type Host } from './api'
 import { LogView } from './components/LogView'
 import { Overview } from './components/Overview'
 import { Uptime } from './components/Uptime'
@@ -10,6 +10,7 @@ type Tab = 'logs' | 'overview' | 'uptime'
 
 export function App() {
   const [containers, setContainers] = useState<Container[]>([])
+  const [host, setHost] = useState<Host>({})
   const [selected, setSelected] = useState<string | null>(null)
   const [tab, setTab] = useState<Tab>('overview')
   const [theme, setTheme] = usePersisted<'dark' | 'light'>('yagura.theme', 'light')
@@ -22,7 +23,11 @@ export function App() {
     let on = true
     const load = () =>
       fetchOverview()
-        .then((c) => on && setContainers(c))
+        .then((o) => {
+          if (!on) return
+          setContainers(o.containers)
+          setHost(o.host)
+        })
         .catch(() => {})
     load()
     const t = setInterval(load, 10000)
@@ -73,7 +78,7 @@ export function App() {
         {tab === 'logs' ? (
           <LogView containers={containers} selected={selected} onSelect={setSelected} />
         ) : tab === 'overview' ? (
-          <Overview containers={containers} />
+          <Overview containers={containers} host={host} />
         ) : (
           <Uptime />
         )}

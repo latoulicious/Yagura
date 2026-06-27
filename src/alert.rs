@@ -11,6 +11,11 @@ const FAIL_THRESHOLD: u32 = 3;
 const FLAP_COUNT: usize = 5;
 const FLAP_WINDOW_S: i64 = 600;
 
+/// Host threshold limits (percent). Breach/clear is debounced by the same `step`
+/// machinery as probes — cross once, clear once, no re-spam while sustained.
+pub const DISK_LIMIT_PCT: f64 = 85.0;
+pub const RAM_LIMIT_PCT: f64 = 90.0;
+
 #[derive(Default)]
 struct AlertState {
     down: bool,
@@ -132,6 +137,46 @@ async fn post(channel: &str, req: reqwest::RequestBuilder) {
     }
 }
 
+/// A host metric measured against its threshold. `breached = pct > limit`; the
+/// alerter maps breach onto `step`'s down/up so a sustained breach alerts once.
+pub struct ThresholdReading {
+    pub key: &'static str,
+    pub pct: f64,
+    pub limit: f64,
+    pub ts: i64,
+}
+
+fn render_threshold(r: &ThresholdReading, a: &Alert) -> String {
+    match a {
+        Alert::Down => format!("🔴 host {} {:.0}% over {:.0}% threshold", r.key, r.pct, r.limit),
+        Alert::Recovery => format!("🟢 host {} back under {:.0}% ({:.0}%)", r.key, r.limit, r.pct),
+        Alert::Flapping => format!("🟡 host {} flapping around {:.0}%", r.key, r.limit),
+        Alert::Stabilized(below) => {
+            let word = if *below { "under" } else { "over" };
+            format!("🔵 host {} stabilized ({word} {:.0}%)", r.key, r.limit)
+        }
+    }
+}
+
+/// Spawn the threshold alerter (separate from probes) and return the channel
+/// host readings are fed into. Reuses `step` + `Config`, so disk/ram cross and
+/// clear exactly once and rapid oscillation collapses to one flapping summary.
+pub fn spawn_thresholds(client: reqwest::Client) -> mpsc::Sender<ThresholdReading> {
+    let cfg = Config::from_env();
+    let (tx, mut rx) = mpsc::channel::<ThresholdReading>(64);
+    tokio::spawn(async move {
+        let mut states: HashMap<&'static str, AlertState> = HashMap::new();
+        while let Some(r) = rx.recv().await {
+            let st = states.entry(r.key).or_default();
+            // Below-or-equal limit is the "up" (healthy) state; breach is "down".
+            if let Some(alert) = step(st, r.pct <= r.limit, r.ts) {
+                cfg.send(&client, &render_threshold(&r, &alert)).await;
+            }
+        }
+    });
+    tx
+}
+
 /// Spawn the alerter task and return the channel probe results are fed into.
 pub fn spawn(client: reqwest::Client) -> mpsc::Sender<CheckResult> {
     let cfg = Config::from_env();
@@ -203,6 +248,24 @@ mod tests {
         assert_eq!(alerts.iter().filter(|x| **x == "flap").count(), 1);
         // Once flapping, down/recovery pings stop — flap is the last thing said.
         assert_eq!(alerts.last(), Some(&"flap"));
+    }
+
+    #[test]
+    fn threshold_breach_alerts_once_then_clears() {
+        let mut st = AlertState::default();
+        let r = |pct: f64, ts: i64| ThresholdReading { key: "disk", pct, limit: DISK_LIMIT_PCT, ts };
+        // Two breached readings confirm nothing yet (FAIL_THRESHOLD = 3).
+        assert!(step(&mut st, 90.0 <= DISK_LIMIT_PCT, 1).is_none());
+        assert!(step(&mut st, 90.0 <= DISK_LIMIT_PCT, 2).is_none());
+        // Third confirms the cross → one DOWN, rendered with key + pct.
+        let breach = r(90.0, 3);
+        let a = step(&mut st, breach.pct <= breach.limit, breach.ts).unwrap();
+        assert_eq!(name(&a), "down");
+        assert!(render_threshold(&breach, &a).contains("disk 90% over 85%"));
+        // Sustained breach is silent.
+        assert!(step(&mut st, 91.0 <= DISK_LIMIT_PCT, 4).is_none());
+        // Drop back under → one recovery.
+        assert_eq!(name(&step(&mut st, 80.0 <= DISK_LIMIT_PCT, 5).unwrap()), "recovery");
     }
 
     #[test]

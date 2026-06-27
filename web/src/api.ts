@@ -10,11 +10,28 @@ export type Container = {
 
 export type Sample = { ts: number; source: string; metric: string; value: number }
 
-export async function fetchOverview(): Promise<Container[]> {
+// Host metrics keyed by metric name (cpu, mem_used, …) — the API contract is the
+// key set, not a rigid struct, so new curated metrics don't churn the type.
+export type Host = Record<string, number>
+export type HostSeries = Record<string, { ts: number; value: number }[]>
+
+export async function fetchOverview(): Promise<{ containers: Container[]; host: Host }> {
   const r = await fetch('/api/overview')
   if (!r.ok) throw new Error(`overview ${r.status}`)
   const j = await r.json()
-  return j.containers ?? []
+  return { containers: j.containers ?? [], host: j.host ?? {} }
+}
+
+export async function fetchHostHistory(): Promise<HostSeries> {
+  const r = await fetch('/api/host/history')
+  if (!r.ok) throw new Error(`host history ${r.status}`)
+  return r.json()
+}
+
+// Percent used, or undefined when there's no reading yet — so the UI shows "—"
+// (via fmtPct) instead of a misleading 0.0% before data arrives.
+export function pct(used: number | undefined, total: number | undefined): number | undefined {
+  return used != null && total ? (used / total) * 100 : undefined
 }
 
 export type Status = 'healthy' | 'degraded' | 'suspended' | 'maintenance'
@@ -100,6 +117,25 @@ export function fmtMs(v: number | null | undefined): string {
 
 export function fmtPct(v: number | null | undefined): string {
   return v == null ? '—' : `${v.toFixed(1)}%`
+}
+
+export function fmtBytesPerSec(v: number | null | undefined): string {
+  return v == null ? '—' : `${fmtBytes(v)}/s`
+}
+
+// Coarse uptime — days/hours is the glance; seconds precision is noise here.
+export function fmtUptime(secs: number | null | undefined): string {
+  if (secs == null) return '—'
+  const d = Math.floor(secs / 86400)
+  const h = Math.floor((secs % 86400) / 3600)
+  const m = Math.floor((secs % 3600) / 60)
+  if (d > 0) return `${d}d ${h}h`
+  if (h > 0) return `${h}h ${m}m`
+  return `${m}m`
+}
+
+export function fmtLoad(v: number | null | undefined): string {
+  return v == null ? '—' : v.toFixed(2)
 }
 
 export function fmtBytes(v: number | null | undefined): string {

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import { fmtBytes, fmtPct, status, tone, type Container, type Sample } from '../api'
+import { fmtBytes, fmtPct, status, tone, type Container, type Host, type Sample } from '../api'
 import { grouped, shortLabel } from '../grouping'
+import { HostMetrics } from './HostMetrics'
 import { StatusDot } from './StatusDot'
 import { StatusBadge } from './StatusBadge'
 
@@ -8,22 +9,31 @@ type Live = Record<string, { cpu?: number; mem?: number; mem_limit?: number }>
 
 const isBroken = (c: Container) => status(c.state) !== 'healthy'
 
-export function Overview({ containers }: { containers: Container[] }) {
+export function Overview({ containers, host }: { containers: Container[]; host: Host }) {
   const [live, setLive] = useState<Live>({})
+  const [hostLive, setHostLive] = useState<Host>({})
 
   useEffect(() => {
     const es = new EventSource('/api/stream')
     es.onmessage = (e) => {
       const s: Sample = JSON.parse(e.data)
       if (s.source.startsWith('check:')) return // probe samples belong to the Uptime tab
+      if (s.source === 'host') {
+        setHostLive((p) => ({ ...p, [s.metric]: s.value }))
+        return
+      }
       setLive((p) => ({ ...p, [s.source]: { ...p[s.source], [s.metric]: s.value } }))
     }
     return () => es.close()
   }, [])
 
+  // Overview poll seeds the snapshot; the live stream overrides per metric.
+  const h = { ...host, ...hostLive }
+
   return (
     <div className="flex-1 overflow-auto py-6">
-      <div className="flex h-8 items-center gap-4 px-4">
+      <HostMetrics host={h} />
+      <div className="mt-2 flex h-8 items-center gap-4 px-4">
         <div className="min-w-0 flex-1 text-xs uppercase tracking-[0.08em] text-text-3">Container</div>
         <div className="w-20 text-right text-xs uppercase tracking-[0.08em] text-text-3">CPU</div>
         <div className="w-48 text-right text-xs uppercase tracking-[0.08em] text-text-3">Memory</div>
