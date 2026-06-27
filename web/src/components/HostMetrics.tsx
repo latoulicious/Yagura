@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Line, LineChart, ResponsiveContainer } from 'recharts'
 import {
+  DISK_LIMIT,
+  RAM_LIMIT,
   fetchHostHistory,
   fmtBytes,
   fmtBytesPerSec,
@@ -11,11 +12,8 @@ import {
   type Host,
   type Sample,
 } from '../api'
+import { Sparkline } from './Sparkline'
 
-// Mirror the backend alert thresholds (alert.rs DISK_LIMIT_PCT / RAM_LIMIT_PCT):
-// breached numbers flip to the offline color. Calm until then.
-const DISK_LIMIT = 85
-const RAM_LIMIT = 90
 // Rolling sparkline length — keep in step with db.rs HOST_WINDOW_SECS / 5s tick.
 const WINDOW = 60
 
@@ -118,35 +116,14 @@ function Stat({
 }) {
   return (
     <div className="flex h-10 items-center gap-4 px-4 hover:bg-elevated">
-      <div className="min-w-0 flex-1 text-text-2">{label}</div>
-      {series ? <Sparkline data={series} breach={breach} /> : <div className="h-6 w-24" />}
+      <div className="w-28 shrink-0 text-text-2">{label}</div>
+      <div className="h-6 min-w-0 flex-1">
+        {series && <Sparkline data={series} tone={breach ? 'offline' : 'healthy'} />}
+      </div>
       <div className="flex w-48 items-baseline justify-end gap-2 font-mono">
         {secondary && <span className="text-xs text-text-3">{secondary}</span>}
         <span className={breach ? 'font-medium text-offline' : 'text-text-2'}>{primary}</span>
       </div>
-    </div>
-  )
-}
-
-// ponytail: host sparkline lives here rather than refactoring Uptime's identical
-// one (out of P3 scope); unify into a shared component if a third caller appears.
-function Sparkline({ data, breach }: { data: number[]; breach?: boolean }) {
-  if (data.length < 2) return <div className="h-6 w-24" />
-  const stroke = breach ? 'var(--color-offline)' : 'var(--color-text-3)'
-  return (
-    <div className="h-6 w-24">
-      <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={data.map((v) => ({ v }))}>
-          <Line
-            type="monotone"
-            dataKey="v"
-            dot={false}
-            stroke={stroke}
-            strokeWidth={1.5}
-            isAnimationActive={false}
-          />
-        </LineChart>
-      </ResponsiveContainer>
     </div>
   )
 }

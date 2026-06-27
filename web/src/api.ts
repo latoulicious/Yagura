@@ -15,6 +15,11 @@ export type Sample = { ts: number; source: string; metric: string; value: number
 export type Host = Record<string, number>
 export type HostSeries = Record<string, { ts: number; value: number }[]>
 
+// Host alert thresholds (mirror alert.rs DISK_LIMIT_PCT / RAM_LIMIT_PCT) — a
+// breached metric flips to the offline tint. Shared by HostMetrics + Footer.
+export const RAM_LIMIT = 90
+export const DISK_LIMIT = 85
+
 export async function fetchOverview(): Promise<Container[]> {
   const r = await fetch('/api/overview')
   if (!r.ok) throw new Error(`overview ${r.status}`)

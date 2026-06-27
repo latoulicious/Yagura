@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Moon, Sun } from 'lucide-react'
 import { fetchOverview, type Container } from './api'
+import { Footer } from './components/Footer'
 import { LogView } from './components/LogView'
 import { Overview } from './components/Overview'
 import { Uptime } from './components/Uptime'
@@ -13,6 +14,7 @@ export function App() {
   const [selected, setSelected] = useState<string | null>(null)
   const [tab, setTab] = useState<Tab>('overview')
   const [theme, setTheme] = usePersisted<'dark' | 'light'>('yagura.theme', 'light')
+  const [updatedAt, setUpdatedAt] = useState<number | null>(null)
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -22,7 +24,11 @@ export function App() {
     let on = true
     const load = () =>
       fetchOverview()
-        .then((c) => on && setContainers(c))
+        .then((c) => {
+          if (!on) return
+          setContainers(c)
+          setUpdatedAt(Date.now())
+        })
         .catch(() => {})
     load()
     const t = setInterval(load, 10000)
@@ -78,6 +84,7 @@ export function App() {
           <Uptime />
         )}
       </main>
+      <Footer containers={containers} updatedAt={updatedAt} />
     </div>
   )
 }

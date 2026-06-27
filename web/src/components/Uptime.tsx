@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
 import { Trash2 } from 'lucide-react'
-import { Line, LineChart, ResponsiveContainer } from 'recharts'
 import {
   ago,
   createCheck,
@@ -13,6 +12,7 @@ import {
   type Sample,
   type Tone,
 } from '../api'
+import { Sparkline } from './Sparkline'
 import { StatusDot } from './StatusDot'
 
 type Live = Record<number, { up?: boolean; latency_ms?: number }>
@@ -78,7 +78,7 @@ export function Uptime() {
               <span className="font-mono text-[10px] uppercase text-text-3">{c.kind}</span>
             </div>
             <div className="w-20 text-right font-mono text-text-2">{fmtMs(latency)}</div>
-            <Sparkline id={c.id} />
+            <ProbeSparkline id={c.id} down={down} />
             <div className="w-24 text-right font-mono text-xs text-text-3">{ago(c.last_down)}</div>
             <button
               onClick={() => deleteCheck(c.id).then(load).catch(() => {})}
@@ -97,7 +97,7 @@ export function Uptime() {
   )
 }
 
-function Sparkline({ id }: { id: number }) {
+function ProbeSparkline({ id, down }: { id: number; down: boolean }) {
   const [data, setData] = useState<CheckResult[]>([])
   useEffect(() => {
     let on = true
@@ -110,21 +110,9 @@ function Sparkline({ id }: { id: number }) {
     }
   }, [id])
 
-  if (data.length < 2) return <div className="h-6 w-32" />
   return (
     <div className="h-6 w-32">
-      <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={data.map((d) => ({ v: d.latency_ms ?? 0 }))}>
-          <Line
-            type="monotone"
-            dataKey="v"
-            dot={false}
-            stroke="var(--color-text-3)"
-            strokeWidth={1.5}
-            isAnimationActive={false}
-          />
-        </LineChart>
-      </ResponsiveContainer>
+      <Sparkline data={data.map((d) => d.latency_ms ?? 0)} tone={down ? 'offline' : 'healthy'} />
     </div>
   )
 }
