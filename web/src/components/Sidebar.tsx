@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, PanelLeftClose } from 'lucide-react'
+import { ChevronDown, ChevronRight } from 'lucide-react'
 import { health, statusOf, type Container } from '../api'
 import { grouped, shortLabel } from '../grouping'
 import { usePersisted } from '../usePersisted'
@@ -10,12 +10,10 @@ export function Sidebar({
   containers,
   selected,
   onSelect,
-  onCollapse,
 }: {
   containers: Container[]
   selected: string | null
   onSelect: (id: string) => void
-  onCollapse: () => void
 }) {
   const [collapsed, setCollapsed] = usePersisted<string[]>('yagura.groups', [])
   const toggle = (k: string) =>
@@ -23,11 +21,8 @@ export function Sidebar({
 
   return (
     <aside className="flex w-60 shrink-0 flex-col border-r border-border bg-base">
-      <div className="flex h-12 shrink-0 items-center justify-between border-b border-border px-4 text-xs uppercase tracking-widest text-text-3">
-        <span>Containers</span>
-        <button onClick={onCollapse} className="text-text-3 hover:text-text-2" title="Collapse sidebar">
-          <PanelLeftClose size={16} />
-        </button>
+      <div className="flex h-12 shrink-0 items-center border-b border-border px-4 text-xs uppercase tracking-widest text-text-3">
+        Containers
       </div>
       <div className="overflow-y-auto py-1">
         {grouped(containers).map(({ def, items }) => {

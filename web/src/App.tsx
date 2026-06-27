@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { PanelLeftOpen } from 'lucide-react'
+import { PanelLeftClose, PanelLeftOpen } from 'lucide-react'
 import { fetchOverview, type Container } from './api'
 import { Sidebar } from './components/Sidebar'
 import { LogView } from './components/LogView'
@@ -40,25 +40,9 @@ export function App() {
 
   return (
     <div className="flex h-full bg-bg text-text font-sans text-sm">
-      {sidebar && (
-        <Sidebar
-          containers={containers}
-          selected={selected}
-          onSelect={setSelected}
-          onCollapse={() => setSidebar(false)}
-        />
-      )}
+      {sidebar && <Sidebar containers={containers} selected={selected} onSelect={setSelected} />}
       <main className="flex min-w-0 flex-1 flex-col">
         <header className="flex h-12 shrink-0 items-center gap-1 border-b border-border px-4">
-          {!sidebar && (
-            <button
-              onClick={() => setSidebar(true)}
-              className="mr-2 text-text-3 hover:text-text-2"
-              title="Show sidebar"
-            >
-              <PanelLeftOpen size={18} />
-            </button>
-          )}
           <span className="mr-4 font-mono text-xs uppercase tracking-widest text-text-3">櫓 Yagura</span>
           <TabBtn active={tab === 'logs'} onClick={() => setTab('logs')}>
             Logs
@@ -66,6 +50,13 @@ export function App() {
           <TabBtn active={tab === 'overview'} onClick={() => setTab('overview')}>
             Overview
           </TabBtn>
+          <button
+            onClick={() => setSidebar(!sidebar)}
+            className="ml-auto text-text-3 hover:text-text-2"
+            title={sidebar ? 'Collapse sidebar' : 'Show sidebar'}
+          >
+            {sidebar ? <PanelLeftClose size={18} /> : <PanelLeftOpen size={18} />}
+          </button>
         </header>
         {tab === 'logs' ? <LogView containerId={selected} /> : <Overview containers={containers} />}
       </main>
