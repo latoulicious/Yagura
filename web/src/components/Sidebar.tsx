@@ -61,7 +61,7 @@ export function Sidebar({
         })}
         {!containers.length && <div className="px-2 py-3 text-xs text-text-3">No containers.</div>}
       </nav>
-      <footer className="shrink-0 border-t border-border px-3 py-2 font-mono text-[11px] text-text-3">
+      <footer className="shrink-0 border-t border-border px-3 py-2 font-mono text-xs text-text-3">
         {containers.length} containers
       </footer>
     </aside>

@@ -2,7 +2,7 @@ import { statusOf, type StatusKind } from '../api'
 
 // active recedes (muted); maintenance/down carry status color.
 const STYLE: Record<StatusKind, string> = {
-  active: 'text-text-3 bg-white/5',
+  active: 'text-text-3 bg-elevated',
   maintenance: 'text-degraded bg-degraded/10',
   down: 'text-offline bg-offline/10',
 }

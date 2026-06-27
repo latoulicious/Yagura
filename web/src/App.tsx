@@ -1,18 +1,23 @@
 import { useEffect, useState } from 'react'
-import { PanelLeft } from 'lucide-react'
+import { Moon, Sun } from 'lucide-react'
 import { fetchOverview, type Container } from './api'
 import { Sidebar } from './components/Sidebar'
 import { LogView } from './components/LogView'
 import { Overview } from './components/Overview'
+import { Uptime } from './components/Uptime'
 import { usePersisted } from './usePersisted'
 
-type Tab = 'logs' | 'overview'
+type Tab = 'logs' | 'overview' | 'uptime'
 
 export function App() {
   const [containers, setContainers] = useState<Container[]>([])
   const [selected, setSelected] = useState<string | null>(null)
-  const [tab, setTab] = useState<Tab>('logs')
-  const [sidebar, setSidebar] = usePersisted<boolean>('yagura.sidebar', true)
+  const [tab, setTab] = useState<Tab>('overview')
+  const [theme, setTheme] = usePersisted<'dark' | 'light'>('yagura.theme', 'dark')
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+  }, [theme])
 
   useEffect(() => {
     let on = true
@@ -40,26 +45,39 @@ export function App() {
 
   return (
     <div className="flex h-full flex-col bg-bg text-text font-sans text-sm">
-      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-3">
-        <button
-          onClick={() => setSidebar(!sidebar)}
-          className="inline-flex size-8 items-center justify-center rounded-md text-text-3 hover:bg-elevated hover:text-text"
-          title="Toggle sidebar"
-        >
-          <PanelLeft size={18} />
-        </button>
-        <span className="mr-2 font-mono text-xs uppercase tracking-widest text-text-3">櫓 Yagura</span>
-        <TabBtn active={tab === 'logs'} onClick={() => setTab('logs')}>
-          Logs
-        </TabBtn>
-        <TabBtn active={tab === 'overview'} onClick={() => setTab('overview')}>
-          Overview
-        </TabBtn>
+      <header className="shrink-0 border-b border-border">
+        <div className="flex h-11 items-center px-3">
+          <span className="font-mono text-xs uppercase tracking-widest text-text-3">櫓 Yagura</span>
+          <button
+            onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+            className="ml-auto inline-flex size-8 items-center justify-center rounded-md text-text-3 hover:bg-elevated hover:text-text"
+            title="Toggle theme"
+          >
+            {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
+          </button>
+        </div>
+        <div className="flex h-10 items-center gap-2 border-t border-border px-3">
+          <TabBtn active={tab === 'overview'} onClick={() => setTab('overview')}>
+            Overview
+          </TabBtn>
+          <TabBtn active={tab === 'uptime'} onClick={() => setTab('uptime')}>
+            Uptime
+          </TabBtn>
+          <TabBtn active={tab === 'logs'} onClick={() => setTab('logs')}>
+            Logs
+          </TabBtn>
+        </div>
       </header>
       <div className="flex min-h-0 flex-1">
-        {sidebar && <Sidebar containers={containers} selected={selected} onSelect={setSelected} />}
+        <Sidebar containers={containers} selected={selected} onSelect={setSelected} />
         <main className="flex min-w-0 flex-1 flex-col">
-          {tab === 'logs' ? <LogView containerId={selected} /> : <Overview containers={containers} />}
+          {tab === 'logs' ? (
+            <LogView containerId={selected} />
+          ) : tab === 'overview' ? (
+            <Overview containers={containers} />
+          ) : (
+            <Uptime />
+          )}
         </main>
       </div>
     </div>
@@ -79,7 +97,7 @@ function TabBtn({
     <button
       onClick={onClick}
       className={`rounded-md px-3 py-1 text-sm ${
-        active ? 'bg-elevated text-text' : 'text-text-3 hover:text-text-2'
+        active ? 'bg-accent/10 text-accent' : 'text-text-3 hover:text-text-2'
       }`}
     >
       {children}
