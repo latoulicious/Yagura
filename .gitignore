@@ -1,0 +1,15 @@
+# Internal phase-tracking docs — not public
+/AGENTS.md
+/docs/
+/docs/wiki/
+
+# Build artifacts
+/target/
+web/node_modules/
+web/dist/*
+!web/dist/.gitkeep
+
+# Runtime
+*.db
+*.db-shm
+*.db-wal
