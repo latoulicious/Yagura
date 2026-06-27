@@ -69,13 +69,8 @@ async fn overview(State(st): State<AppState>) -> Result<impl IntoResponse, Statu
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)??;
 
     let mut map: HashMap<(String, String), f64> = HashMap::new();
-    let mut host = serde_json::Map::new();
     for s in latest {
-        if s.source == "host" {
-            host.insert(s.metric, serde_json::json!(s.value));
-        } else {
-            map.insert((s.source, s.metric), s.value);
-        }
+        map.insert((s.source, s.metric), s.value);
     }
 
     let rows: Vec<ContainerRow> = containers
@@ -94,7 +89,7 @@ async fn overview(State(st): State<AppState>) -> Result<impl IntoResponse, Statu
         })
         .collect();
 
-    Ok(Json(serde_json::json!({ "containers": rows, "host": host })))
+    Ok(Json(serde_json::json!({ "containers": rows })))
 }
 
 /// Host metric sparklines: 48h of samples downsampled into 30-min buckets,

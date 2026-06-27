@@ -15,11 +15,11 @@ export type Sample = { ts: number; source: string; metric: string; value: number
 export type Host = Record<string, number>
 export type HostSeries = Record<string, { ts: number; value: number }[]>
 
-export async function fetchOverview(): Promise<{ containers: Container[]; host: Host }> {
+export async function fetchOverview(): Promise<Container[]> {
   const r = await fetch('/api/overview')
   if (!r.ok) throw new Error(`overview ${r.status}`)
   const j = await r.json()
-  return { containers: j.containers ?? [], host: j.host ?? {} }
+  return j.containers ?? []
 }
 
 export async function fetchHostHistory(): Promise<HostSeries> {

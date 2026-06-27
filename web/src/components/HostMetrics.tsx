@@ -9,30 +9,58 @@ import {
   fmtUptime,
   pct,
   type Host,
-  type HostSeries,
+  type Sample,
 } from '../api'
 
 // Mirror the backend alert thresholds (alert.rs DISK_LIMIT_PCT / RAM_LIMIT_PCT):
 // breached numbers flip to the offline color. Calm until then.
 const DISK_LIMIT = 85
 const RAM_LIMIT = 90
+// Rolling sparkline length — keep in step with db.rs HOST_WINDOW_SECS / 5s tick.
+const WINDOW = 60
 
-/// Curated host stats above the container grid — number + 48h sparkline per row.
-export function HostMetrics({ host: h }: { host: Host }) {
-  const [hist, setHist] = useState<HostSeries>({})
+/// Curated host stats above the container grid — live number + rolling sparkline
+/// per row. Seeded from /api/host/history on load, then advanced over /api/stream
+/// (dozzle-style: the line moves every tick).
+export function HostMetrics() {
+  const [now, setNow] = useState<Host>({})
+  const [buf, setBuf] = useState<Record<string, number[]>>({})
 
+  // Seed the rolling buffers (and current numbers) from recent history.
   useEffect(() => {
     let on = true
-    const load = () => fetchHostHistory().then((d) => on && setHist(d)).catch(() => {})
-    load()
-    const t = setInterval(load, 60000)
+    fetchHostHistory()
+      .then((series) => {
+        if (!on) return
+        const b: Record<string, number[]> = {}
+        const latest: Host = {}
+        for (const [m, pts] of Object.entries(series)) {
+          b[m] = pts.map((p) => p.value).slice(-WINDOW)
+          if (pts.length) latest[m] = pts[pts.length - 1].value
+        }
+        setBuf(b)
+        setNow(latest)
+      })
+      .catch(() => {})
     return () => {
       on = false
-      clearInterval(t)
     }
   }, [])
 
-  const ser = (m: string) => hist[m]?.map((p) => p.value) ?? []
+  // Advance numbers + sparklines live off the host samples on the stream.
+  useEffect(() => {
+    const es = new EventSource('/api/stream')
+    es.onmessage = (e) => {
+      const s: Sample = JSON.parse(e.data)
+      if (s.source !== 'host') return
+      setNow((p) => ({ ...p, [s.metric]: s.value }))
+      setBuf((p) => ({ ...p, [s.metric]: [...(p[s.metric] ?? []), s.value].slice(-WINDOW) }))
+    }
+    return () => es.close()
+  }, [])
+
+  const h = now
+  const ser = (m: string) => buf[m] ?? []
   const memPct = pct(h.mem_used, h.mem_total)
   const diskPct = pct(h.disk_used, h.disk_total)
   const bytes2 = (used?: number, total?: number) => `${fmtBytes(used)} / ${fmtBytes(total)}`
