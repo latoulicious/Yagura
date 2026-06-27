@@ -264,9 +264,8 @@ pub fn history(conn: &Connection, check_id: i64, limit: i64) -> Result<Vec<Resul
     Ok(v)
 }
 
-/// Recent host samples (last `HOST_WINDOW_SECS`), oldest-first, all metrics — the
-/// rolling-sparkline seed. Bounded by the time floor + indexed by
-/// `idx_samples_src_metric_ts`, so it's a small scan run once per page load.
+/// Recent host samples (last `HOST_WINDOW_SECS`), oldest-first — the rolling-sparkline
+/// seed. Time-floored + indexed, so it's a small scan run once per page load.
 pub fn host_history(conn: &Connection) -> Result<Vec<HostPoint>> {
     let cutoff = now_ts() - HOST_WINDOW_SECS;
     let mut stmt = conn.prepare(

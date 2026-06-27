@@ -158,9 +158,8 @@ fn render_threshold(r: &ThresholdReading, a: &Alert) -> String {
     }
 }
 
-/// Spawn the threshold alerter (separate from probes) and return the channel
-/// host readings are fed into. Reuses `step` + `Config`, so disk/ram cross and
-/// clear exactly once and rapid oscillation collapses to one flapping summary.
+/// Spawn the threshold alerter (separate from probes); reuses `step` + `Config`, so
+/// disk/ram cross once, clear once, and oscillation collapses to one flapping note.
 pub fn spawn_thresholds(client: reqwest::Client) -> mpsc::Sender<ThresholdReading> {
     let cfg = Config::from_env();
     let (tx, mut rx) = mpsc::channel::<ThresholdReading>(64);

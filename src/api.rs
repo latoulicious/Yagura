@@ -92,9 +92,8 @@ async fn overview(State(st): State<AppState>) -> Result<impl IntoResponse, Statu
     Ok(Json(serde_json::json!({ "containers": rows })))
 }
 
-/// Host metric sparklines: 48h of samples downsampled into 30-min buckets,
-/// keyed by metric (`{ cpu: [{ts,value}…], mem_used: […], … }`). One request
-/// covers every section, so the Overview tab doesn't fan out N polls.
+/// Host sparkline seed: recent samples per metric (`{ cpu:[{ts,value}…], … }`), one
+/// request for every section so the Overview tab doesn't fan out N polls.
 async fn host_history(State(st): State<AppState>) -> Result<impl IntoResponse, StatusCode> {
     let db = st.db_read.clone();
     let pts = tokio::task::spawn_blocking(move || {

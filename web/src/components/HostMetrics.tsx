@@ -19,9 +19,8 @@ const RAM_LIMIT = 90
 // Rolling sparkline length — keep in step with db.rs HOST_WINDOW_SECS / 5s tick.
 const WINDOW = 60
 
-/// Curated host stats above the container grid — live number + rolling sparkline
-/// per row. Seeded from /api/host/history on load, then advanced over /api/stream
-/// (dozzle-style: the line moves every tick).
+// Curated host stats above the container grid — live number + rolling sparkline per
+// row. Seeded from /api/host/history, then advanced live over /api/stream.
 export function HostMetrics() {
   const [now, setNow] = useState<Host>({})
   const [buf, setBuf] = useState<Record<string, number[]>>({})
