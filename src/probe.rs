@@ -103,3 +103,24 @@ impl Collector for ProbeCollector {
         results
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::net::TcpListener;
+
+    #[tokio::test]
+    async fn tcp_probe_up_when_listening_down_when_closed() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+
+        let (up, latency) = probe_tcp(&addr).await;
+        assert!(up);
+        assert!(latency.is_some());
+
+        drop(listener); // port now refuses connections
+        let (up, latency) = probe_tcp(&addr).await;
+        assert!(!up);
+        assert!(latency.is_none());
+    }
+}

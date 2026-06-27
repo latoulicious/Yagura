@@ -253,3 +253,64 @@ pub fn history(conn: &Connection, check_id: i64, limit: i64) -> Result<Vec<Resul
     v.reverse();
     Ok(v)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mem() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(SCHEMA).unwrap();
+        conn
+    }
+
+    fn add_result(conn: &Connection, check_id: i64, ts: i64, up: i64, lat: Option<i64>) {
+        conn.execute(
+            "INSERT INTO check_results (ts, check_id, up, latency_ms) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![ts, check_id, up, lat],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn list_checks_merges_latest_result_and_last_down() {
+        let conn = mem();
+        conn.execute(
+            "INSERT INTO checks (id, kind, target, interval_s, enabled) VALUES (1,'http','https://a',30,1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO checks (id, kind, target, interval_s, enabled) VALUES (2,'tcp','b:443',30,1)",
+            [],
+        )
+        .unwrap();
+        // Check 1: down at ts=100, recovered (latest) at ts=200.
+        add_result(&conn, 1, 100, 0, None);
+        add_result(&conn, 1, 200, 1, Some(12));
+
+        let rows = list_checks(&conn).unwrap();
+        let c1 = rows.iter().find(|r| r.id == 1).unwrap();
+        assert_eq!(c1.up, Some(true)); // latest result wins
+        assert_eq!(c1.latency_ms, Some(12));
+        assert_eq!(c1.since, Some(200));
+        assert_eq!(c1.last_down, Some(100));
+
+        let c2 = rows.iter().find(|r| r.id == 2).unwrap();
+        assert_eq!(c2.up, None); // no results yet
+        assert_eq!(c2.since, None);
+        assert_eq!(c2.last_down, None);
+    }
+
+    #[test]
+    fn history_returns_most_recent_oldest_first() {
+        let conn = mem();
+        for ts in [10, 20, 30] {
+            add_result(&conn, 1, ts, 1, Some(5));
+        }
+        let h = history(&conn, 1, 2).unwrap();
+        assert_eq!(h.len(), 2); // limit honored
+        assert_eq!(h[0].ts, 20); // oldest-first within the limited window
+        assert_eq!(h[1].ts, 30);
+    }
+}
