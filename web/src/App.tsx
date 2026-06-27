@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { PanelLeftClose, PanelLeftOpen } from 'lucide-react'
+import { PanelLeft } from 'lucide-react'
 import { fetchOverview, type Container } from './api'
 import { Sidebar } from './components/Sidebar'
 import { LogView } from './components/LogView'
@@ -39,27 +39,29 @@ export function App() {
   }, [containers, selected])
 
   return (
-    <div className="flex h-full bg-bg text-text font-sans text-sm">
-      {sidebar && <Sidebar containers={containers} selected={selected} onSelect={setSelected} />}
-      <main className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-12 shrink-0 items-center gap-1 border-b border-border px-4">
-          <span className="mr-4 font-mono text-xs uppercase tracking-widest text-text-3">櫓 Yagura</span>
-          <TabBtn active={tab === 'logs'} onClick={() => setTab('logs')}>
-            Logs
-          </TabBtn>
-          <TabBtn active={tab === 'overview'} onClick={() => setTab('overview')}>
-            Overview
-          </TabBtn>
-          <button
-            onClick={() => setSidebar(!sidebar)}
-            className="ml-auto text-text-3 hover:text-text-2"
-            title={sidebar ? 'Collapse sidebar' : 'Show sidebar'}
-          >
-            {sidebar ? <PanelLeftClose size={18} /> : <PanelLeftOpen size={18} />}
-          </button>
-        </header>
-        {tab === 'logs' ? <LogView containerId={selected} /> : <Overview containers={containers} />}
-      </main>
+    <div className="flex h-full flex-col bg-bg text-text font-sans text-sm">
+      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-3">
+        <button
+          onClick={() => setSidebar(!sidebar)}
+          className="inline-flex size-8 items-center justify-center rounded-md text-text-3 hover:bg-elevated hover:text-text"
+          title="Toggle sidebar"
+        >
+          <PanelLeft size={18} />
+        </button>
+        <span className="mr-2 font-mono text-xs uppercase tracking-widest text-text-3">櫓 Yagura</span>
+        <TabBtn active={tab === 'logs'} onClick={() => setTab('logs')}>
+          Logs
+        </TabBtn>
+        <TabBtn active={tab === 'overview'} onClick={() => setTab('overview')}>
+          Overview
+        </TabBtn>
+      </header>
+      <div className="flex min-h-0 flex-1">
+        {sidebar && <Sidebar containers={containers} selected={selected} onSelect={setSelected} />}
+        <main className="flex min-w-0 flex-1 flex-col">
+          {tab === 'logs' ? <LogView containerId={selected} /> : <Overview containers={containers} />}
+        </main>
+      </div>
     </div>
   )
 }
@@ -76,7 +78,7 @@ function TabBtn({
   return (
     <button
       onClick={onClick}
-      className={`rounded px-3 py-1 text-sm ${
+      className={`rounded-md px-3 py-1 text-sm ${
         active ? 'bg-elevated text-text' : 'text-text-3 hover:text-text-2'
       }`}
     >
