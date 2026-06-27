@@ -7,6 +7,7 @@ mod host;
 mod probe;
 
 use crate::collector::{Collector, Sample};
+use std::io::IsTerminal;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::{broadcast, mpsc};
@@ -15,7 +16,11 @@ const TICK_SECS: u64 = 5;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt::init();
+    // Color only on an interactive terminal; plain text under docker logs/journald
+    // so the ANSI escapes don't litter piped or copied output.
+    tracing_subscriber::fmt()
+        .with_ansi(std::io::stderr().is_terminal())
+        .init();
 
     let bind = std::env::var("YAGURA_BIND").unwrap_or_else(|_| "127.0.0.1:8080".into());
     let db_path = std::env::var("YAGURA_DB").unwrap_or_else(|_| "yagura.db".into());
