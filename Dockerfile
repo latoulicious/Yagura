@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # 1. Build the SPA — rust-embed bakes web/dist into the binary.
-FROM node:22-alpine AS web
+FROM node:24-alpine AS web
 WORKDIR /web
 RUN npm i -g pnpm
 COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml ./
