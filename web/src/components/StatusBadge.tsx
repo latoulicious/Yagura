@@ -1,19 +1,20 @@
-import { statusOf, type StatusKind } from '../api'
+import type { Status } from '../api'
 
-// active recedes (muted); maintenance/down carry status color.
-const STYLE: Record<StatusKind, string> = {
-  active: 'text-text-3 bg-elevated',
-  maintenance: 'text-degraded bg-degraded/10',
-  down: 'text-offline bg-offline/10',
+// Text pill (visual-design.md §Badges). Drawn only for non-healthy states —
+// a healthy row stays calm with just its dot.
+const STYLE: Record<Status, string> = {
+  healthy: 'text-healthy',
+  degraded: 'text-degraded',
+  suspended: 'text-offline',
+  maintenance: 'text-unknown',
 }
 
-export function StatusBadge({ state }: { state: string }) {
-  const s = statusOf(state)
+export function StatusBadge({ status }: { status: Status }) {
   return (
     <span
-      className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide ${STYLE[s.kind]}`}
+      className={`shrink-0 rounded-full bg-current/10 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide ${STYLE[status]}`}
     >
-      {s.label}
+      {status}
     </span>
   )
 }

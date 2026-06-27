@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Moon, Sun } from 'lucide-react'
 import { fetchOverview, type Container } from './api'
-import { Sidebar } from './components/Sidebar'
 import { LogView } from './components/LogView'
 import { Overview } from './components/Overview'
 import { Uptime } from './components/Uptime'
@@ -13,7 +12,7 @@ export function App() {
   const [containers, setContainers] = useState<Container[]>([])
   const [selected, setSelected] = useState<string | null>(null)
   const [tab, setTab] = useState<Tab>('overview')
-  const [theme, setTheme] = usePersisted<'dark' | 'light'>('yagura.theme', 'dark')
+  const [theme, setTheme] = usePersisted<'dark' | 'light'>('yagura.theme', 'light')
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -50,13 +49,15 @@ export function App() {
           <span className="font-mono text-xs uppercase tracking-widest text-text-3">櫓 Yagura</span>
           <button
             onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-            className="ml-auto inline-flex size-8 items-center justify-center rounded-md text-text-3 hover:bg-elevated hover:text-text"
+            aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+            aria-pressed={theme === 'dark'}
+            className="ml-auto inline-flex size-8 items-center justify-center rounded-[2px] text-text-3 hover:bg-elevated hover:text-text"
             title="Toggle theme"
           >
             {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
           </button>
         </div>
-        <div className="flex h-10 items-center gap-2 border-t border-border px-3">
+        <div className="flex h-10 items-center gap-4 border-t border-border px-3">
           <TabBtn active={tab === 'overview'} onClick={() => setTab('overview')}>
             Overview
           </TabBtn>
@@ -68,18 +69,15 @@ export function App() {
           </TabBtn>
         </div>
       </header>
-      <div className="flex min-h-0 flex-1">
-        <Sidebar containers={containers} selected={selected} onSelect={setSelected} />
-        <main className="flex min-w-0 flex-1 flex-col">
-          {tab === 'logs' ? (
-            <LogView containerId={selected} />
-          ) : tab === 'overview' ? (
-            <Overview containers={containers} />
-          ) : (
-            <Uptime />
-          )}
-        </main>
-      </div>
+      <main className="flex min-h-0 min-w-0 flex-1 flex-col">
+        {tab === 'logs' ? (
+          <LogView containers={containers} selected={selected} onSelect={setSelected} />
+        ) : tab === 'overview' ? (
+          <Overview containers={containers} />
+        ) : (
+          <Uptime />
+        )}
+      </main>
     </div>
   )
 }
@@ -96,8 +94,10 @@ function TabBtn({
   return (
     <button
       onClick={onClick}
-      className={`rounded-md px-3 py-1 text-sm ${
-        active ? 'bg-accent/10 text-accent' : 'text-text-3 hover:text-text-2'
+      className={`inline-flex h-10 items-center border-b-2 px-1 text-sm ${
+        active
+          ? 'border-accent-primary text-text'
+          : 'border-transparent text-text-3 hover:text-text-2'
       }`}
     >
       {children}

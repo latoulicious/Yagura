@@ -17,44 +17,27 @@ export async function fetchOverview(): Promise<Container[]> {
   return j.containers ?? []
 }
 
-export type Health = 'healthy' | 'degraded' | 'offline' | 'unknown'
+export type Status = 'healthy' | 'degraded' | 'suspended' | 'maintenance'
 
-// Calm-until-broken: only non-running states carry a status color.
-export function health(state: string): Health {
+// Container state → badge status. Calm-until-broken: running shows no badge.
+export function status(state: string): Status {
   switch (state) {
     case 'running':
       return 'healthy'
     case 'restarting':
-    case 'paused':
       return 'degraded'
-    case 'exited':
-    case 'dead':
-    case 'removing':
-      return 'offline'
-    default:
-      return 'unknown'
-  }
-}
-
-export const HEALTH_TEXT: Record<Health, string> = {
-  healthy: 'text-healthy',
-  degraded: 'text-degraded',
-  offline: 'text-offline',
-  unknown: 'text-unknown',
-}
-
-export type StatusKind = 'active' | 'maintenance' | 'down'
-
-// running = active, paused = intentional maintenance, anything else = down.
-export function statusOf(state: string): { kind: StatusKind; label: string } {
-  switch (state) {
-    case 'running':
-      return { kind: 'active', label: 'active' }
     case 'paused':
-      return { kind: 'maintenance', label: 'maintenance' }
+      return 'maintenance'
     default:
-      return { kind: 'down', label: 'down' }
+      return 'suspended' // exited, dead, removing, created, …
   }
+}
+
+// Dot color tone — the semantic palette (status.* tokens in visual-design.md).
+export type Tone = 'healthy' | 'degraded' | 'offline' | 'unknown'
+
+export function tone(s: Status): Tone {
+  return s === 'suspended' ? 'offline' : s === 'maintenance' ? 'unknown' : s
 }
 
 export type Check = {

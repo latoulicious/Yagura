@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
-import { fmtBytes, fmtPct, health, type Container, type Sample } from '../api'
+import { fmtBytes, fmtPct, status, tone, type Container, type Sample } from '../api'
 import { grouped, shortLabel } from '../grouping'
+import { StatusDot } from './StatusDot'
 import { StatusBadge } from './StatusBadge'
 
 type Live = Record<string, { cpu?: number; mem?: number; mem_limit?: number }>
 
-const isBroken = (c: Container) => health(c.state) !== 'healthy'
+const isBroken = (c: Container) => status(c.state) !== 'healthy'
 
 export function Overview({ containers }: { containers: Container[] }) {
   const [live, setLive] = useState<Live>({})
@@ -21,54 +22,56 @@ export function Overview({ containers }: { containers: Container[] }) {
   }, [])
 
   return (
-    <div className="flex-1 overflow-auto p-6">
-      <div className="grid grid-cols-[1fr_6rem_12rem] items-baseline gap-x-8">
-        <div className="text-xs uppercase tracking-wider text-text-3">Container</div>
-        <div className="text-right text-xs uppercase tracking-wider text-text-3">CPU</div>
-        <div className="text-right text-xs uppercase tracking-wider text-text-3">Memory</div>
-
-        {grouped(containers).map(({ def, items }) => {
-          const rows = [...items].sort(
-            (a, b) =>
-              Number(isBroken(b)) - Number(isBroken(a)) ||
-              shortLabel(a.name).localeCompare(shortLabel(b.name)),
-          )
-          return (
-            <div key={def.key} className="contents">
-              <div className="col-span-3 pb-1 pt-5 text-xs uppercase tracking-wider text-text-3/70">
-                {def.label}
-              </div>
-              {rows.map((c) => {
-                const m = live[c.id] ?? {}
-                const running = c.state === 'running'
-                const lim = m.mem_limit ?? c.mem_limit
-                return (
-                  <div key={c.id} className="contents">
-                    <div className="flex items-center gap-2 py-0.5">
-                      <span className="truncate text-text-2">{shortLabel(c.name)}</span>
-                      <StatusBadge state={c.state} />
-                    </div>
-                    <div className="py-0.5 text-right font-mono text-text-2">
-                      {running ? fmtPct(m.cpu ?? c.cpu) : '—'}
-                    </div>
-                    <div className="py-0.5 text-right font-mono text-text-3">
-                      {running ? (
-                        <>
-                          <span className="text-text-2">{fmtBytes(m.mem ?? c.mem)}</span>
-                          {lim ? ` / ${fmtBytes(lim)}` : ''}
-                        </>
-                      ) : (
-                        '—'
-                      )}
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          )
-        })}
-        {!containers.length && <div className="col-span-3 text-xs text-text-3">No containers.</div>}
+    <div className="flex-1 overflow-auto py-6">
+      <div className="flex h-8 items-center gap-4 px-4">
+        <div className="min-w-0 flex-1 text-xs uppercase tracking-[0.08em] text-text-3">Container</div>
+        <div className="w-20 text-right text-xs uppercase tracking-[0.08em] text-text-3">CPU</div>
+        <div className="w-48 text-right text-xs uppercase tracking-[0.08em] text-text-3">Memory</div>
       </div>
+
+      {grouped(containers).map(({ def, items }) => {
+        const rows = [...items].sort(
+          (a, b) =>
+            Number(isBroken(b)) - Number(isBroken(a)) ||
+            shortLabel(a.name).localeCompare(shortLabel(b.name)),
+        )
+        return (
+          <div key={def.key}>
+            <div className="px-4 pb-1 pt-6 text-xs uppercase tracking-[0.08em] text-text-3">
+              {def.label}
+            </div>
+            {rows.map((c) => {
+              const m = live[c.id] ?? {}
+              const running = c.state === 'running'
+              const lim = m.mem_limit ?? c.mem_limit
+              const st = status(c.state)
+              return (
+                <div key={c.id} className="flex h-10 items-center gap-4 px-4 hover:bg-elevated">
+                  <div className="flex min-w-0 flex-1 items-center gap-2">
+                    <StatusDot tone={tone(st)} />
+                    <span className="truncate text-text-2">{shortLabel(c.name)}</span>
+                    {st !== 'healthy' && <StatusBadge status={st} />}
+                  </div>
+                  <div className="w-20 text-right font-mono text-text-2">
+                    {running ? fmtPct(m.cpu ?? c.cpu) : '—'}
+                  </div>
+                  <div className="w-48 text-right font-mono text-text-3">
+                    {running ? (
+                      <>
+                        <span className="text-text-2">{fmtBytes(m.mem ?? c.mem)}</span>
+                        {lim ? ` / ${fmtBytes(lim)}` : ''}
+                      </>
+                    ) : (
+                      '—'
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )
+      })}
+      {!containers.length && <div className="px-4 pt-6 text-sm text-text-3">No containers.</div>}
     </div>
   )
 }
