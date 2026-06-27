@@ -1,0 +1,43 @@
+@import "@fontsource-variable/geist";
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/ibm-plex-mono/500.css";
+@import "tailwindcss";
+
+/* Dark theme tokens. Tailwind v4 exposes each as a utility:
+   --color-base -> bg-base, --color-text-2 -> text-text-2, etc. */
+@theme {
+  --color-bg: #0f1115;
+  --color-base: #151922;
+  --color-elevated: #1a1f29;
+  --color-overlay: #202633;
+
+  --color-text: #f3f4f6;
+  --color-text-2: #c7cbd4;
+  --color-text-3: #8b93a1;
+
+  --color-border-subtle: rgba(255, 255, 255, 0.05);
+  --color-border: rgba(255, 255, 255, 0.08);
+  --color-border-strong: rgba(255, 255, 255, 0.12);
+
+  --color-accent: #60a5fa;
+
+  --color-healthy: #22c55e;
+  --color-degraded: #f59e0b;
+  --color-offline: #ef4444;
+  --color-unknown: #6b7280;
+
+  --font-sans: "Geist Variable", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+
+  --radius-md: 4px;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+body {
+  margin: 0;
+  background: var(--color-bg);
+}
