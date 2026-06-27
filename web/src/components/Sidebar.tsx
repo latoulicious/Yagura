@@ -1,6 +1,9 @@
+import { ChevronDown, ChevronRight } from 'lucide-react'
 import { health, HEALTH_TEXT, type Container } from '../api'
+import { grouped, shortLabel } from '../grouping'
+import { usePersisted } from '../usePersisted'
 
-const broken = (c: Container) => health(c.state) !== 'healthy'
+const isBroken = (c: Container) => health(c.state) !== 'healthy'
 
 export function Sidebar({
   containers,
@@ -11,47 +14,63 @@ export function Sidebar({
   selected: string | null
   onSelect: (id: string) => void
 }) {
-  // Broken sorts to top, then alphabetical (calm-until-broken).
-  const sorted = [...containers].sort(
-    (a, b) => Number(broken(b)) - Number(broken(a)) || a.name.localeCompare(b.name),
-  )
+  const [collapsed, setCollapsed] = usePersisted<string[]>('yagura.groups', [])
+  const toggle = (k: string) =>
+    setCollapsed(collapsed.includes(k) ? collapsed.filter((x) => x !== k) : [...collapsed, k])
 
   return (
-    <aside className="flex w-64 shrink-0 flex-col border-r border-border bg-base">
+    <aside className="flex w-60 shrink-0 flex-col border-r border-border bg-base">
       <div className="flex h-12 shrink-0 items-center border-b border-border px-4 text-xs uppercase tracking-widest text-text-3">
         Containers
       </div>
-      <ul className="overflow-y-auto">
-        {sorted.map((c) => {
-          const h = health(c.state)
-          const isBroken = h !== 'healthy'
+      <div className="overflow-y-auto py-1">
+        {grouped(containers).map(({ def, items }) => {
+          const open = !collapsed.includes(def.key)
+          const broken = items.some(isBroken)
+          const rows = [...items].sort(
+            (a, b) =>
+              Number(isBroken(b)) - Number(isBroken(a)) ||
+              shortLabel(a.name).localeCompare(shortLabel(b.name)),
+          )
           return (
-            <li key={c.id}>
+            <div key={def.key} className="mb-1">
               <button
-                onClick={() => onSelect(c.id)}
-                className={`w-full border-l-2 px-4 py-2 text-left hover:bg-elevated ${
-                  selected === c.id ? 'border-accent bg-elevated' : 'border-transparent'
-                }`}
+                onClick={() => toggle(def.key)}
+                className="flex w-full items-center gap-1.5 px-3 py-1.5 text-xs uppercase tracking-wider text-text-3 hover:text-text-2"
               >
-                <div className={`flex items-center gap-2 ${isBroken ? 'font-medium' : ''}`}>
-                  <span
-                    className={`size-1.5 shrink-0 rounded-full ${
-                      isBroken ? `${HEALTH_TEXT[h]} bg-current` : 'bg-text-3/40'
-                    }`}
-                  />
-                  <span className={`truncate ${isBroken ? HEALTH_TEXT[h] : 'text-text-2'}`}>
-                    {c.name || c.id.slice(0, 12)}
-                  </span>
-                </div>
-                <div className="truncate pl-3.5 font-mono text-xs text-text-3">{c.status}</div>
+                {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                <span>{def.label}</span>
+                <span className="text-text-3/60">{items.length}</span>
+                {broken && <span className="ml-auto size-1.5 rounded-full bg-offline" />}
               </button>
-            </li>
+              {open &&
+                rows.map((c) => {
+                  const h = health(c.state)
+                  const bad = h !== 'healthy'
+                  return (
+                    <button
+                      key={c.id}
+                      onClick={() => onSelect(c.id)}
+                      className={`flex w-full items-center gap-2 border-l-2 py-1 pl-6 pr-3 text-left hover:bg-elevated ${
+                        selected === c.id ? 'border-accent bg-elevated' : 'border-transparent'
+                      }`}
+                    >
+                      <span
+                        className={`size-1.5 shrink-0 rounded-full ${
+                          bad ? `${HEALTH_TEXT[h]} bg-current` : 'bg-text-3/40'
+                        }`}
+                      />
+                      <span className={`truncate ${bad ? `font-medium ${HEALTH_TEXT[h]}` : 'text-text-2'}`}>
+                        {shortLabel(c.name)}
+                      </span>
+                    </button>
+                  )
+                })}
+            </div>
           )
         })}
-        {!containers.length && (
-          <li className="px-4 py-3 text-xs text-text-3">No containers.</li>
-        )}
-      </ul>
+        {!containers.length && <div className="px-4 py-3 text-xs text-text-3">No containers.</div>}
+      </div>
     </aside>
   )
 }
