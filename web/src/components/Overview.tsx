@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import { fmtBytes, fmtPct, health, HEALTH_TEXT, type Container, type Sample } from '../api'
+import { fmtBytes, fmtPct, health, type Container, type Sample } from '../api'
 import { grouped, shortLabel } from '../grouping'
+import { StatusBadge } from './StatusBadge'
 
 type Live = Record<string, { cpu?: number; mem?: number; mem_limit?: number }>
 
@@ -39,13 +40,12 @@ export function Overview({ containers }: { containers: Container[] }) {
               {rows.map((c) => {
                 const m = live[c.id] ?? {}
                 const running = c.state === 'running'
-                const h = health(c.state)
-                const bad = h !== 'healthy'
                 const lim = m.mem_limit ?? c.mem_limit
                 return (
                   <div key={c.id} className="contents">
-                    <div className={`truncate py-0.5 ${bad ? `font-medium ${HEALTH_TEXT[h]}` : 'text-text-2'}`}>
-                      {shortLabel(c.name)}
+                    <div className="flex items-center gap-2 py-0.5">
+                      <span className="truncate text-text-2">{shortLabel(c.name)}</span>
+                      <StatusBadge state={c.state} />
                     </div>
                     <div className="py-0.5 text-right font-mono text-text-2">
                       {running ? fmtPct(m.cpu ?? c.cpu) : '—'}

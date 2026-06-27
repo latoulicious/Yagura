@@ -43,6 +43,20 @@ export const HEALTH_TEXT: Record<Health, string> = {
   unknown: 'text-unknown',
 }
 
+export type StatusKind = 'active' | 'maintenance' | 'down'
+
+// running = active, paused = intentional maintenance, anything else = down.
+export function statusOf(state: string): { kind: StatusKind; label: string } {
+  switch (state) {
+    case 'running':
+      return { kind: 'active', label: 'active' }
+    case 'paused':
+      return { kind: 'maintenance', label: 'maintenance' }
+    default:
+      return { kind: 'down', label: 'down' }
+  }
+}
+
 export function fmtPct(v: number | null | undefined): string {
   return v == null ? '—' : `${v.toFixed(1)}%`
 }
