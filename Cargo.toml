@@ -10,6 +10,7 @@ axum = "0.8.9"
 bollard = "0.21.0"
 futures-util = "0.3.32"
 mime_guess = "2.0.5"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 rusqlite = { version = "0.40.1", features = ["bundled"] }
 rust-embed = "8.11.0"
 serde = { version = "1.0.228", features = ["derive"] }
