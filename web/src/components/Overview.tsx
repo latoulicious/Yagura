@@ -14,6 +14,7 @@ export function Overview({ containers }: { containers: Container[] }) {
     const es = new EventSource('/api/stream')
     es.onmessage = (e) => {
       const s: Sample = JSON.parse(e.data)
+      if (s.source.startsWith('check:')) return // probe samples belong to the Uptime tab
       setLive((p) => ({ ...p, [s.source]: { ...p[s.source], [s.metric]: s.value } }))
     }
     return () => es.close()
