@@ -140,9 +140,11 @@ pub fn spawn_writer(path: &str) -> Result<mpsc::Sender<DbMsg>> {
                     }
                 }
                 DbMsg::Beat(name, ts) => {
+                    // Monotonic: a late/replayed beat must not move last_ts backward.
                     if let Err(e) = conn.execute(
                         "INSERT INTO beats (name, last_ts) VALUES (?1, ?2) \
-                         ON CONFLICT(name) DO UPDATE SET last_ts = excluded.last_ts",
+                         ON CONFLICT(name) DO UPDATE SET last_ts = excluded.last_ts \
+                         WHERE excluded.last_ts > beats.last_ts",
                         rusqlite::params![name, ts],
                     ) {
                         tracing::warn!("beat upsert failed: {e}");
