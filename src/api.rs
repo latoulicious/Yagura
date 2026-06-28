@@ -92,7 +92,8 @@ async fn overview(State(st): State<AppState>) -> Result<impl IntoResponse, Statu
         .collect();
 
     // Single-host: one name for the whole grid (frontend renders it per row).
-    let host = sysinfo::System::host_name().unwrap_or_default();
+    // From the Docker daemon, not sysinfo — Yagura runs in a container.
+    let host = st.docker.host_name().await.unwrap_or_default();
     Ok(Json(serde_json::json!({ "host": host, "containers": rows })))
 }
 

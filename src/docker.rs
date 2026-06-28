@@ -32,6 +32,12 @@ impl DockerCollector {
         })
     }
 
+    /// Docker daemon's hostname — the real host even when Yagura runs in a
+    /// container (where `sysinfo` would report the container id instead).
+    pub async fn host_name(&self) -> Option<String> {
+        self.docker.info().await.ok()?.name
+    }
+
     /// All containers (running + stopped) with current state/status.
     pub async fn list(&self) -> Result<Vec<ContainerInfo>> {
         let opts = ListContainersOptionsBuilder::new().all(true).build();
