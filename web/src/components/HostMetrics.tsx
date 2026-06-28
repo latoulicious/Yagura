@@ -5,20 +5,21 @@ import {
   fetchHostHistory,
   fmtBytes,
   fmtBytesPerSec,
-  fmtLoad,
   fmtPct,
-  fmtUptime,
   pct,
+  toneForPct,
   type Host,
   type Sample,
+  type Tone,
 } from '../api'
 import { Sparkline } from './Sparkline'
 
 // Rolling sparkline length — keep in step with db.rs HOST_WINDOW_SECS / 5s tick.
 const WINDOW = 60
 
-// Curated host stats above the container grid — live number + rolling sparkline per
-// row. Seeded from /api/host/history, then advanced live over /api/stream.
+// Curated host stats above the container grid — a tile per metric: live number,
+// avg/pk, and a rolling sparkline. Disk and network I/O pair their two directions
+// in one tile. Seeded from /api/host/history, advanced live over /api/stream.
 export function HostMetrics() {
   const [now, setNow] = useState<Host>({})
   const [buf, setBuf] = useState<Record<string, number[]>>({})
@@ -59,70 +60,121 @@ export function HostMetrics() {
   const h = now
   const ser = (m: string) => buf[m] ?? []
   const memPct = pct(h.mem_used, h.mem_total)
+  const swapPct = pct(h.swap_used, h.swap_total)
   const diskPct = pct(h.disk_used, h.disk_total)
   const bytes2 = (used?: number, total?: number) => `${fmtBytes(used)} / ${fmtBytes(total)}`
 
   return (
     <div>
-      <div className="px-4 pb-1 pt-2 text-xs uppercase tracking-[0.08em] text-text-3">Host</div>
-      <Stat label="CPU" primary={fmtPct(h.cpu)} series={ser('cpu')} />
-      <Stat
-        label="Memory"
-        primary={fmtPct(memPct)}
-        secondary={bytes2(h.mem_used, h.mem_total)}
-        series={ser('mem_used')}
-        breach={(memPct ?? 0) > RAM_LIMIT}
-      />
-      <Stat
-        label="Swap"
-        primary={fmtPct(pct(h.swap_used, h.swap_total))}
-        secondary={bytes2(h.swap_used, h.swap_total)}
-        series={ser('swap_used')}
-      />
-      <Stat
-        label="Disk"
-        primary={fmtPct(diskPct)}
-        secondary={bytes2(h.disk_used, h.disk_total)}
-        series={ser('disk_used')}
-        breach={(diskPct ?? 0) > DISK_LIMIT}
-      />
-      <Stat label="Disk read" primary={fmtBytesPerSec(h.disk_read)} series={ser('disk_read')} />
-      <Stat label="Disk write" primary={fmtBytesPerSec(h.disk_write)} series={ser('disk_write')} />
-      <Stat label="Net rx" primary={fmtBytesPerSec(h.net_rx)} series={ser('net_rx')} />
-      <Stat label="Net tx" primary={fmtBytesPerSec(h.net_tx)} series={ser('net_tx')} />
-      <Stat
-        label="Load"
-        primary={fmtLoad(h.load1)}
-        secondary={`${fmtLoad(h.load5)} ${fmtLoad(h.load15)}`}
-        series={ser('load1')}
-      />
-      <Stat label="Uptime" primary={fmtUptime(h.uptime)} />
+      <div className="px-4 pb-2 pt-2 text-xs uppercase tracking-[0.08em] text-text-3">Host</div>
+      <div className="grid grid-cols-2 gap-2 px-4 lg:grid-cols-3">
+        <Tile label="CPU" primary={fmtPct(h.cpu)} series={ser('cpu')} fmt={fmtPct} tone={toneForPct(h.cpu)} />
+        <Tile
+          label="Memory"
+          primary={fmtPct(memPct)}
+          secondary={bytes2(h.mem_used, h.mem_total)}
+          series={ser('mem_used')}
+          fmt={fmtBytes}
+          tone={toneForPct(memPct)}
+          breach={(memPct ?? 0) > RAM_LIMIT}
+        />
+        <Tile
+          label="Swap"
+          primary={fmtPct(swapPct)}
+          secondary={bytes2(h.swap_used, h.swap_total)}
+          series={ser('swap_used')}
+          fmt={fmtBytes}
+          tone={toneForPct(swapPct)}
+        />
+        <Tile
+          label="Disk"
+          primary={fmtPct(diskPct)}
+          secondary={bytes2(h.disk_used, h.disk_total)}
+          series={ser('disk_used')}
+          fmt={fmtBytes}
+          tone={toneForPct(diskPct)}
+          breach={(diskPct ?? 0) > DISK_LIMIT}
+        />
+        <DualTile
+          label="Disk I/O"
+          items={[
+            { sub: 'read', primary: fmtBytesPerSec(h.disk_read), series: ser('disk_read') },
+            { sub: 'write', primary: fmtBytesPerSec(h.disk_write), series: ser('disk_write') },
+          ]}
+        />
+        <DualTile
+          label="Network I/O"
+          items={[
+            { sub: 'rx', primary: fmtBytesPerSec(h.net_rx), series: ser('net_rx') },
+            { sub: 'tx', primary: fmtBytesPerSec(h.net_tx), series: ser('net_tx') },
+          ]}
+        />
+      </div>
     </div>
   )
 }
 
-function Stat({
+const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length
+
+// One host metric tile: label + optional context, big live value, avg/pk meta,
+// and a full-width sparkline beneath (visual-design §Sparklines).
+function Tile({
   label,
   primary,
   secondary,
   series,
+  fmt = (n) => n.toFixed(1),
+  tone = 'healthy',
   breach,
 }: {
   label: string
   primary: string
   secondary?: string
   series?: number[]
+  fmt?: (n: number) => string
+  tone?: Tone
   breach?: boolean
 }) {
+  const meta = series && series.length ? `avg ${fmt(mean(series))} · pk ${fmt(Math.max(...series))}` : null
   return (
-    <div className="flex h-10 items-center gap-4 px-4 hover:bg-elevated">
-      <div className="w-28 shrink-0 text-text-2">{label}</div>
-      <div className="h-6 min-w-0 flex-1">
-        {series && <Sparkline data={series} tone={breach ? 'offline' : 'healthy'} />}
+    <div className="rounded-[2px] border border-border bg-base p-3">
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-xs uppercase tracking-[0.08em] text-text-3">{label}</span>
+        {secondary && <span className="truncate font-mono text-xs text-text-3">{secondary}</span>}
       </div>
-      <div className="flex w-48 items-baseline justify-end gap-2 font-mono">
-        {secondary && <span className="text-xs text-text-3">{secondary}</span>}
-        <span className={breach ? 'font-medium text-offline' : 'text-text-2'}>{primary}</span>
+      <div className={`mt-1 font-mono text-xl ${breach ? 'font-medium text-offline' : 'text-text'}`}>
+        {primary}
+      </div>
+      <div className="h-3 font-mono text-xs text-text-3">{meta}</div>
+      <div className="mt-2 h-6">{series && <Sparkline data={series} tone={tone} />}</div>
+    </div>
+  )
+}
+
+// Two paired directions (read/write, rx/tx) in one tile — sublabel, live value,
+// and a sparkline each.
+function DualTile({
+  label,
+  items,
+}: {
+  label: string
+  items: { sub: string; primary: string; series: number[]; tone?: Tone }[]
+}) {
+  return (
+    <div className="rounded-[2px] border border-border bg-base p-3">
+      <div className="text-xs uppercase tracking-[0.08em] text-text-3">{label}</div>
+      <div className="mt-2 grid grid-cols-2 gap-3">
+        {items.map((it) => (
+          <div key={it.sub}>
+            <div className="flex items-baseline justify-between gap-1">
+              <span className="text-[11px] uppercase tracking-[0.08em] text-text-3">{it.sub}</span>
+              <span className="font-mono text-sm text-text">{it.primary}</span>
+            </div>
+            <div className="mt-2 h-6">
+              <Sparkline data={it.series} tone={it.tone ?? 'healthy'} />
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   )

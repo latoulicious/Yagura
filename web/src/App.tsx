@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Moon, Sun } from 'lucide-react'
-import { fetchOverview, type Container } from './api'
+import { fetchOverview, fmtUptime, type Container, type Sample } from './api'
 import { Footer } from './components/Footer'
 import { LogView } from './components/LogView'
 import { Overview } from './components/Overview'
@@ -11,22 +11,35 @@ type Tab = 'logs' | 'overview' | 'uptime'
 
 export function App() {
   const [containers, setContainers] = useState<Container[]>([])
+  const [host, setHost] = useState('')
   const [selected, setSelected] = useState<string | null>(null)
   const [tab, setTab] = useState<Tab>('overview')
   const [theme, setTheme] = usePersisted<'dark' | 'light'>('yagura.theme', 'light')
   const [updatedAt, setUpdatedAt] = useState<number | null>(null)
+  const [uptime, setUptime] = useState<number | null>(null)
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
   }, [theme])
 
+  // Host uptime for the header — live off the existing host stream (metric only).
+  useEffect(() => {
+    const es = new EventSource('/api/stream')
+    es.onmessage = (e) => {
+      const s: Sample = JSON.parse(e.data)
+      if (s.source === 'host' && s.metric === 'uptime') setUptime(s.value)
+    }
+    return () => es.close()
+  }, [])
+
   useEffect(() => {
     let on = true
     const load = () =>
       fetchOverview()
-        .then((c) => {
+        .then(({ host, containers }) => {
           if (!on) return
-          setContainers(c)
+          setHost(host)
+          setContainers(containers)
           setUpdatedAt(Date.now())
         })
         .catch(() => {})
@@ -73,13 +86,16 @@ export function App() {
           <TabBtn active={tab === 'logs'} onClick={() => setTab('logs')}>
             Logs
           </TabBtn>
+          {uptime != null && (
+            <span className="ml-auto font-mono text-xs text-text-3">up {fmtUptime(uptime)}</span>
+          )}
         </div>
       </header>
       <main className="flex min-h-0 min-w-0 flex-1 flex-col">
         {tab === 'logs' ? (
           <LogView containers={containers} selected={selected} onSelect={setSelected} />
         ) : tab === 'overview' ? (
-          <Overview containers={containers} />
+          <Overview containers={containers} host={host} />
         ) : (
           <Uptime />
         )}
