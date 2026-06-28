@@ -6,6 +6,7 @@ export type Container = {
   cpu: number | null
   mem: number | null
   mem_limit: number | null
+  created: number
 }
 
 export type Sample = { ts: number; source: string; metric: string; value: number }
@@ -20,11 +21,13 @@ export type HostSeries = Record<string, { ts: number; value: number }[]>
 export const RAM_LIMIT = 90
 export const DISK_LIMIT = 85
 
-export async function fetchOverview(): Promise<Container[]> {
+export type Overview = { host: string; containers: Container[] }
+
+export async function fetchOverview(): Promise<Overview> {
   const r = await fetch('/api/overview')
   if (!r.ok) throw new Error(`overview ${r.status}`)
   const j = await r.json()
-  return j.containers ?? []
+  return { host: j.host ?? '', containers: j.containers ?? [] }
 }
 
 export async function fetchHostHistory(): Promise<HostSeries> {
@@ -60,6 +63,15 @@ export type Tone = 'healthy' | 'degraded' | 'offline' | 'unknown'
 
 export function tone(s: Status): Tone {
   return s === 'suspended' ? 'offline' : s === 'maintenance' ? 'unknown' : s
+}
+
+// Chart/value tint by load (visual-design §Charts): >90% offline, >70% degraded,
+// else calm text-tertiary. Null (no reading) stays calm.
+export function toneForPct(pct: number | null | undefined): Tone {
+  if (pct == null) return 'healthy'
+  if (pct > 90) return 'offline'
+  if (pct > 70) return 'degraded'
+  return 'healthy'
 }
 
 export type Check = {
