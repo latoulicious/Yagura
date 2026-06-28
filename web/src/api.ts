@@ -11,6 +11,11 @@ export type Container = {
 
 export type Sample = { ts: number; source: string; metric: string; value: number }
 
+// Live container metrics + rolling sparkline buffers, keyed by container id. Owned
+// by App (survives tab switches), consumed by Overview.
+export type Live = Record<string, { cpu?: number; mem?: number; mem_limit?: number }>
+export type Bufs = Record<string, { cpu: number[]; mem: number[] }>
+
 // Host metrics keyed by metric name (cpu, mem_used, …) — the API contract is the
 // key set, not a rigid struct, so new curated metrics don't churn the type.
 export type Host = Record<string, number>

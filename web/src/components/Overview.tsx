@@ -1,41 +1,25 @@
-import { useEffect, useState } from 'react'
-import { ago, fmtBytes, fmtPct, pct, status, tone, toneForPct, type Container, type Sample } from '../api'
+import { ago, fmtBytes, fmtPct, pct, status, tone, toneForPct, type Bufs, type Container, type Live } from '../api'
 import { grouped, shortLabel } from '../grouping'
 import { HostMetrics } from './HostMetrics'
 import { Sparkline } from './Sparkline'
 import { StatusDot } from './StatusDot'
 import { StatusBadge } from './StatusBadge'
 
-type Live = Record<string, { cpu?: number; mem?: number; mem_limit?: number }>
-type Bufs = Record<string, { cpu: number[]; mem: number[] }>
-
-// Rolling sparkline length — 30-point window for the container grid.
-const WINDOW = 30
-
 const isBroken = (c: Container) => status(c.state) !== 'healthy'
 
-export function Overview({ containers, host }: { containers: Container[]; host: string }) {
-  const [live, setLive] = useState<Live>({})
-  const [bufs, setBufs] = useState<Bufs>({})
-
-  useEffect(() => {
-    const es = new EventSource('/api/stream')
-    es.onmessage = (e) => {
-      const s: Sample = JSON.parse(e.data)
-      // probe samples belong to Uptime; host samples to HostMetrics' own stream.
-      if (s.source.startsWith('check:') || s.source === 'host') return
-      setLive((p) => ({ ...p, [s.source]: { ...p[s.source], [s.metric]: s.value } }))
-      if (s.metric === 'cpu' || s.metric === 'mem') {
-        const metric = s.metric
-        setBufs((p) => {
-          const cur = p[s.source] ?? { cpu: [], mem: [] }
-          return { ...p, [s.source]: { ...cur, [metric]: [...cur[metric], s.value].slice(-WINDOW) } }
-        })
-      }
-    }
-    return () => es.close()
-  }, [])
-
+// Presentational — live metrics + sparkline buffers come from App so they persist
+// across tab switches (the SSE subscription lives there, not here).
+export function Overview({
+  containers,
+  host,
+  live,
+  bufs,
+}: {
+  containers: Container[]
+  host: string
+  live: Live
+  bufs: Bufs
+}) {
   return (
     <div className="flex-1 overflow-auto py-6">
       <HostMetrics />
@@ -45,7 +29,7 @@ export function Overview({ containers, host }: { containers: Container[]; host: 
         <div className="w-28">Status</div>
         <div className="w-28">Created</div>
         <div className="w-36 text-right">CPU</div>
-        <div className="w-64 text-right">Memory</div>
+        <div className="w-48 text-right">Memory</div>
       </div>
 
       {grouped(containers).map(({ def, items }) => {
@@ -93,20 +77,13 @@ export function Overview({ containers, host }: { containers: Container[]; host: 
                     )}
                     <span>{running ? fmtPct(cpu) : '—'}</span>
                   </div>
-                  <div className="flex w-64 items-center justify-end gap-2 font-mono text-text-3">
+                  <div className="flex w-48 items-center justify-end gap-2 font-mono text-text-2">
                     {running && (
                       <div className="h-6 w-16">
                         <Sparkline data={b.mem} tone={toneForPct(memPct)} />
                       </div>
                     )}
-                    {running ? (
-                      <span>
-                        <span className="text-text-2">{fmtBytes(m.mem ?? c.mem)}</span>
-                        {lim ? ` / ${fmtBytes(lim)}` : ''}
-                      </span>
-                    ) : (
-                      <span>—</span>
-                    )}
+                    <span>{running ? fmtBytes(m.mem ?? c.mem) : '—'}</span>
                   </div>
                 </div>
               )
