@@ -1,11 +1,14 @@
-use crate::collector::Sample;
+use crate::beat;
+use crate::collector::{Sample, now_ts};
 use crate::db;
 use crate::docker::DockerCollector;
+use crate::drift;
+use crate::version;
 use axum::extract::{Path, Query, State};
 use axum::http::{StatusCode, Uri, header};
 use axum::response::IntoResponse;
 use axum::response::sse::{Event, KeepAlive, Sse};
-use axum::routing::{delete, get};
+use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use futures_util::{Stream, StreamExt};
 use rusqlite::Connection;
@@ -27,6 +30,12 @@ pub struct AppState {
     pub db_read: Arc<Mutex<Connection>>,
     pub events: broadcast::Sender<Sample>,
     pub db_write: mpsc::Sender<db::DbMsg>,
+    // Latest route-drift sweep, refreshed by the drift ticker.
+    pub drift: Arc<Mutex<Vec<drift::Route>>>,
+    // Expected heartbeats (registry), joined with last-seen at request time.
+    pub beats: Arc<Vec<beat::BeatSpec>>,
+    // Latest per-service version poll, refreshed by the version ticker.
+    pub versions: Arc<Mutex<Vec<version::VersionStatus>>>,
 }
 
 pub fn router(state: AppState) -> Router {
@@ -38,6 +47,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/checks/{id}", delete(checks_delete))
         .route("/api/checks/{id}/history", get(checks_history))
         .route("/api/host/history", get(host_history))
+        .route("/api/drift", get(drift_list))
+        .route("/api/beats", get(beats_list))
+        .route("/api/versions", get(versions_list))
+        .route("/beat/{name}", post(beat))
         .fallback(static_handler)
         .with_state(state)
 }
@@ -92,8 +105,68 @@ async fn overview(State(st): State<AppState>) -> Result<impl IntoResponse, Statu
         .collect();
 
     // Single-host: one name for the whole grid (frontend renders it per row).
-    let host = sysinfo::System::host_name().unwrap_or_default();
+    // From the Docker daemon, not sysinfo — Yagura runs in a container.
+    let host = st.docker.host_name().await.unwrap_or_default();
     Ok(Json(serde_json::json!({ "host": host, "containers": rows })))
+}
+
+/// Latest route-drift sweep — each cloudflared route and whether a listener answers.
+async fn drift_list(State(st): State<AppState>) -> Result<impl IntoResponse, StatusCode> {
+    let routes = st
+        .drift
+        .lock()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .clone();
+    Ok(Json(routes))
+}
+
+/// Latest per-service version/commit poll.
+async fn versions_list(State(st): State<AppState>) -> Result<impl IntoResponse, StatusCode> {
+    let versions = st
+        .versions
+        .lock()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .clone();
+    Ok(Json(versions))
+}
+
+/// Heartbeat ingest — a registered job checks in; stamp receipt time for the deadman.
+/// Unknown names are rejected so the table can't grow unbounded from the tunnel.
+async fn beat(State(st): State<AppState>, Path(name): Path<String>) -> StatusCode {
+    if !st.beats.iter().any(|spec| spec.name == name) {
+        return StatusCode::NOT_FOUND;
+    }
+    match st.db_write.send(db::DbMsg::Beat(name, now_ts())).await {
+        Ok(_) => StatusCode::NO_CONTENT,
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
+    }
+}
+
+/// Expected heartbeats joined with last-seen + whether each is overdue.
+async fn beats_list(State(st): State<AppState>) -> Result<impl IntoResponse, StatusCode> {
+    let db = st.db_read.clone();
+    let last = tokio::task::spawn_blocking(move || {
+        let conn = db.lock().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        db::list_beats(&conn).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)??;
+
+    let now = now_ts();
+    let out: Vec<_> = st
+        .beats
+        .iter()
+        .map(|s| {
+            let last_ts = last.get(&s.name).copied();
+            serde_json::json!({
+                "name": s.name,
+                "deadline_s": s.deadline_s,
+                "last_ts": last_ts,
+                "missing": last_ts.is_none_or(|ts| now - ts > s.deadline_s),
+            })
+        })
+        .collect();
+    Ok(Json(out))
 }
 
 /// Host sparkline seed: recent samples per metric (`{ cpu:[{ts,value}…], … }`), one

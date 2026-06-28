@@ -13,3 +13,6 @@ web/dist/*
 *.db
 *.db-shm
 *.db-wal
+
+# Secrets — real config; .env.example is the committed template
+.env

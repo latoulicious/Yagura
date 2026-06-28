@@ -6,8 +6,14 @@ services:
     # Loopback-only; the Cloudflare Tunnel reaches it. 8080/8090 are dozzle/Tsugi.
     ports:
       - "127.0.0.1:8091:8080"
+    # Runtime config (alerts + P4). Optional — compose runs without a .env present.
+    env_file:
+      - path: .env
+        required: false
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
+      # route-drift reads the tunnel config (read-only).
+      - /etc/cloudflared/config.yml:/etc/cloudflared/config.yml:ro
       - yagura-data:/data
 
 volumes:

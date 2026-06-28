@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Container } from '../api'
-import { grouped, shortLabel } from '../grouping'
+import { Picker } from './Picker'
 
 const MAX_LINES = 5000
 
@@ -45,22 +45,7 @@ export function LogView({
   return (
     <>
       <div className="flex h-10 shrink-0 items-center gap-4 border-b border-border px-4">
-        <select
-          aria-label="Container"
-          value={selected ?? ''}
-          onChange={(e) => onSelect(e.target.value)}
-          className="rounded-[2px] border border-border bg-elevated px-2 py-1 font-mono text-xs text-text-2 outline-none focus:border-border-strong"
-        >
-          {grouped(containers).map(({ def, items }) => (
-            <optgroup key={def.key} label={def.label}>
-              {items.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {shortLabel(c.name)}
-                </option>
-              ))}
-            </optgroup>
-          ))}
-        </select>
+        <Picker containers={containers} selected={selected} onSelect={onSelect} />
         <input
           aria-label="Filter logs"
           value={filter}

@@ -1,13 +1,17 @@
 import { useEffect, useState } from 'react'
 import { Moon, Sun } from 'lucide-react'
-import { fetchOverview, fmtUptime, type Container, type Sample } from './api'
+import { fetchOverview, fmtUptime, type Bufs, type Container, type Live, type Sample } from './api'
+import { Drift } from './components/Drift'
 import { Footer } from './components/Footer'
 import { LogView } from './components/LogView'
 import { Overview } from './components/Overview'
 import { Uptime } from './components/Uptime'
 import { usePersisted } from './usePersisted'
 
-type Tab = 'logs' | 'overview' | 'uptime'
+type Tab = 'logs' | 'overview' | 'uptime' | 'drift'
+
+// Rolling sparkline window for the container grid (30 points).
+const WINDOW = 30
 
 export function App() {
   const [containers, setContainers] = useState<Container[]>([])
@@ -17,17 +21,33 @@ export function App() {
   const [theme, setTheme] = usePersisted<'dark' | 'light'>('yagura.theme', 'light')
   const [updatedAt, setUpdatedAt] = useState<number | null>(null)
   const [uptime, setUptime] = useState<number | null>(null)
+  const [live, setLive] = useState<Live>({})
+  const [bufs, setBufs] = useState<Bufs>({})
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
   }, [theme])
 
-  // Host uptime for the header — live off the existing host stream (metric only).
+  // One container/host stream for App — header uptime plus the container live
+  // values and rolling sparkline buffers. Owned here so the buffers survive tab
+  // switches (Overview unmounts; this doesn't).
   useEffect(() => {
     const es = new EventSource('/api/stream')
     es.onmessage = (e) => {
       const s: Sample = JSON.parse(e.data)
-      if (s.source === 'host' && s.metric === 'uptime') setUptime(s.value)
+      if (s.source === 'host') {
+        if (s.metric === 'uptime') setUptime(s.value)
+        return
+      }
+      if (s.source.startsWith('check:')) return
+      setLive((p) => ({ ...p, [s.source]: { ...p[s.source], [s.metric]: s.value } }))
+      if (s.metric === 'cpu' || s.metric === 'mem') {
+        const metric = s.metric
+        setBufs((p) => {
+          const cur = p[s.source] ?? { cpu: [], mem: [] }
+          return { ...p, [s.source]: { ...cur, [metric]: [...cur[metric], s.value].slice(-WINDOW) } }
+        })
+      }
     }
     return () => es.close()
   }, [])
@@ -86,6 +106,9 @@ export function App() {
           <TabBtn active={tab === 'logs'} onClick={() => setTab('logs')}>
             Logs
           </TabBtn>
+          <TabBtn active={tab === 'drift'} onClick={() => setTab('drift')}>
+            Drift
+          </TabBtn>
           {uptime != null && (
             <span className="ml-auto font-mono text-xs text-text-3">up {fmtUptime(uptime)}</span>
           )}
@@ -95,9 +118,11 @@ export function App() {
         {tab === 'logs' ? (
           <LogView containers={containers} selected={selected} onSelect={setSelected} />
         ) : tab === 'overview' ? (
-          <Overview containers={containers} host={host} />
-        ) : (
+          <Overview containers={containers} host={host} live={live} bufs={bufs} />
+        ) : tab === 'uptime' ? (
           <Uptime />
+        ) : (
+          <Drift />
         )}
       </main>
       <Footer containers={containers} updatedAt={updatedAt} />

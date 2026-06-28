@@ -11,6 +11,11 @@ export type Container = {
 
 export type Sample = { ts: number; source: string; metric: string; value: number }
 
+// Live container metrics + rolling sparkline buffers, keyed by container id. Owned
+// by App (survives tab switches), consumed by Overview.
+export type Live = Record<string, { cpu?: number; mem?: number; mem_limit?: number }>
+export type Bufs = Record<string, { cpu: number[]; mem: number[] }>
+
 // Host metrics keyed by metric name (cpu, mem_used, …) — the API contract is the
 // key set, not a rigid struct, so new curated metrics don't churn the type.
 export type Host = Record<string, number>
@@ -28,6 +33,28 @@ export async function fetchOverview(): Promise<Overview> {
   if (!r.ok) throw new Error(`overview ${r.status}`)
   const j = await r.json()
   return { host: j.host ?? '', containers: j.containers ?? [] }
+}
+
+export type Route = { hostname: string; target: string; up: boolean; ts: number }
+export type Beat = { name: string; deadline_s: number; last_ts: number | null; missing: boolean }
+export type Version = { label: string; version: string | null; commit: string | null; ok: boolean }
+
+export async function fetchDrift(): Promise<Route[]> {
+  const r = await fetch('/api/drift')
+  if (!r.ok) throw new Error(`drift ${r.status}`)
+  return r.json()
+}
+
+export async function fetchBeats(): Promise<Beat[]> {
+  const r = await fetch('/api/beats')
+  if (!r.ok) throw new Error(`beats ${r.status}`)
+  return r.json()
+}
+
+export async function fetchVersions(): Promise<Version[]> {
+  const r = await fetch('/api/versions')
+  if (!r.ok) throw new Error(`versions ${r.status}`)
+  return r.json()
 }
 
 export async function fetchHostHistory(): Promise<HostSeries> {

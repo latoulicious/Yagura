@@ -1,10 +1,13 @@
 mod alert;
 mod api;
+mod beat;
 mod collector;
 mod db;
 mod docker;
+mod drift;
 mod host;
 mod probe;
+mod version;
 
 use crate::collector::{Collector, Sample};
 use std::io::IsTerminal;
@@ -13,6 +16,12 @@ use std::time::Duration;
 use tokio::sync::{broadcast, mpsc};
 
 const TICK_SECS: u64 = 5;
+// Routes change rarely; a 30s drift sweep is plenty and keeps the TCP probes cheap.
+const DRIFT_TICK_SECS: u64 = 30;
+// Heartbeat deadlines are minutes-to-hours; a 60s deadman scan is fine-grained enough.
+const BEAT_TICK_SECS: u64 = 60;
+// Deploys are infrequent; poll each service /version once a minute.
+const VERSION_TICK_SECS: u64 = 60;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -36,14 +45,27 @@ async fn main() -> anyhow::Result<()> {
     spawn_collector(docker.clone(), host, writer.clone(), events.clone(), thresholds);
 
     let alerts = alert::spawn(http.clone());
-    let prober = Arc::new(probe::ProbeCollector::new(http, db::open_read(&db_path)?));
+    let prober = Arc::new(probe::ProbeCollector::new(http.clone(), db::open_read(&db_path)?));
     spawn_prober(prober, writer.clone(), events.clone(), alerts);
+
+    let drift_state = Arc::new(Mutex::new(Vec::<drift::Route>::new()));
+    let status_alerts = alert::spawn_status(http.clone());
+    spawn_drift(drift::DriftCollector::new(), drift_state.clone(), status_alerts.clone());
+
+    let beats = Arc::new(beat::registry());
+    spawn_beats(beats.clone(), Mutex::new(db::open_read(&db_path)?), status_alerts);
+
+    let versions_state = Arc::new(Mutex::new(Vec::<version::VersionStatus>::new()));
+    spawn_versions(version::VersionCollector::new(http), versions_state.clone());
 
     let app = api::router(api::AppState {
         docker,
         db_read,
         events,
         db_write: writer,
+        drift: drift_state,
+        beats,
+        versions: versions_state,
     });
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     tracing::info!("yagura listening on {bind}");
@@ -106,6 +128,97 @@ async fn send_thresholds(tx: &mpsc::Sender<alert::ThresholdReading>, samples: &[
     for r in readings.into_iter().flatten() {
         let _ = tx.send(r).await;
     }
+}
+
+/// Drift tick loop: sweep cloudflared routes, publish each route's up/down to the
+/// status alerter (orphan = one alert), and stash the latest set for the API.
+fn spawn_drift(
+    collector: drift::DriftCollector,
+    state: Arc<Mutex<Vec<drift::Route>>>,
+    alerts: mpsc::Sender<alert::StatusEvent>,
+) {
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(Duration::from_secs(DRIFT_TICK_SECS));
+        loop {
+            tick.tick().await;
+            let routes = collector.check().await;
+            for r in &routes {
+                let _ = alerts
+                    .send(alert::StatusEvent {
+                        key: format!("route:{}", r.hostname),
+                        up: r.up,
+                        ts: r.ts,
+                        label: format!("{} → {}", r.hostname, r.target),
+                        kind: "route",
+                    })
+                    .await;
+            }
+            *state.lock().unwrap() = routes;
+        }
+    });
+}
+
+/// Deadman loop: each tick, flag any expected beat whose last check-in is older than
+/// its deadline (or never seen) and feed it to the status alerter (debounced).
+fn spawn_beats(
+    registry: Arc<Vec<beat::BeatSpec>>,
+    conn: Mutex<rusqlite::Connection>,
+    alerts: mpsc::Sender<alert::StatusEvent>,
+) {
+    if registry.is_empty() {
+        return; // no expected beats configured → no deadman task
+    }
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(Duration::from_secs(BEAT_TICK_SECS));
+        loop {
+            tick.tick().await;
+            let last = {
+                let c = conn.lock().unwrap();
+                match db::list_beats(&c) {
+                    Ok(last) => last,
+                    // A read failure must not look like "all beats missing" → skip the tick.
+                    Err(e) => {
+                        tracing::warn!("beat scan skipped: {e}");
+                        continue;
+                    }
+                }
+            };
+            let now = collector::now_ts();
+            for spec in registry.iter() {
+                let missing = last
+                    .get(&spec.name)
+                    .is_none_or(|&ts| now - ts > spec.deadline_s);
+                let _ = alerts
+                    .send(alert::StatusEvent {
+                        key: format!("beat:{}", spec.name),
+                        up: !missing,
+                        ts: now,
+                        label: spec.name.clone(),
+                        kind: "beat",
+                    })
+                    .await;
+            }
+        }
+    });
+}
+
+/// Version poll loop: poll each service `/version` and stash the latest set for the
+/// API. No-op when nothing is configured.
+fn spawn_versions(
+    collector: version::VersionCollector,
+    state: Arc<Mutex<Vec<version::VersionStatus>>>,
+) {
+    if collector.is_empty() {
+        return;
+    }
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(Duration::from_secs(VERSION_TICK_SECS));
+        loop {
+            tick.tick().await;
+            let v = collector.check().await;
+            *state.lock().unwrap() = v;
+        }
+    });
 }
 
 /// Probe tick loop: each result fans out live (as `check:<id>` samples), to the
