@@ -176,6 +176,49 @@ pub fn spawn_thresholds(client: reqwest::Client) -> mpsc::Sender<ThresholdReadin
     tx
 }
 
+/// A keyed up/down signal for drift routes and heartbeats. Folds through the same
+/// `step` debounce so an orphan / missing beat alerts once, recovers once.
+pub struct StatusEvent {
+    pub key: String,
+    pub up: bool,
+    pub ts: i64,
+    pub label: String,
+    pub kind: &'static str,
+}
+
+fn render_status(kind: &str, label: &str, a: &Alert) -> String {
+    let (down, up) = match kind {
+        "route" => ("orphaned", "restored"),
+        "beat" => ("missing", "resumed"),
+        _ => ("down", "up"),
+    };
+    match a {
+        Alert::Down => format!("🔴 {kind} {label} {down}"),
+        Alert::Recovery => format!("🟢 {kind} {label} {up}"),
+        Alert::Flapping => format!("🟡 {kind} {label} flapping"),
+        Alert::Stabilized(ok) => {
+            format!("🔵 {kind} {label} stabilized ({})", if *ok { up } else { down })
+        }
+    }
+}
+
+/// Spawn the generic status alerter (drift + heartbeats). Keyed by `StatusEvent.key`,
+/// debounced per key by the shared `step` machinery.
+pub fn spawn_status(client: reqwest::Client) -> mpsc::Sender<StatusEvent> {
+    let cfg = Config::from_env();
+    let (tx, mut rx) = mpsc::channel::<StatusEvent>(128);
+    tokio::spawn(async move {
+        let mut states: HashMap<String, AlertState> = HashMap::new();
+        while let Some(e) = rx.recv().await {
+            let st = states.entry(e.key.clone()).or_default();
+            if let Some(alert) = step(st, e.up, e.ts) {
+                cfg.send(&client, &render_status(e.kind, &e.label, &alert)).await;
+            }
+        }
+    });
+    tx
+}
+
 /// Spawn the alerter task and return the channel probe results are fed into.
 pub fn spawn(client: reqwest::Client) -> mpsc::Sender<CheckResult> {
     let cfg = Config::from_env();

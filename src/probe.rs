@@ -76,8 +76,8 @@ impl ProbeCollector {
     }
 }
 
-/// TCP probe: a successful connect within the timeout is up.
-async fn probe_tcp(target: &str) -> (bool, Option<i64>) {
+/// TCP probe: a successful connect within the timeout is up. Shared with route-drift.
+pub(crate) async fn probe_tcp(target: &str) -> (bool, Option<i64>) {
     let start = Instant::now();
     match tokio::time::timeout(PROBE_TIMEOUT, TcpStream::connect(target)).await {
         Ok(Ok(_)) => (true, Some(start.elapsed().as_millis() as i64)),

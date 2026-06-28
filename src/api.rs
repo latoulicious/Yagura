@@ -1,6 +1,7 @@
 use crate::collector::Sample;
 use crate::db;
 use crate::docker::DockerCollector;
+use crate::drift;
 use axum::extract::{Path, Query, State};
 use axum::http::{StatusCode, Uri, header};
 use axum::response::IntoResponse;
@@ -27,6 +28,8 @@ pub struct AppState {
     pub db_read: Arc<Mutex<Connection>>,
     pub events: broadcast::Sender<Sample>,
     pub db_write: mpsc::Sender<db::DbMsg>,
+    // Latest route-drift sweep, refreshed by the drift ticker.
+    pub drift: Arc<Mutex<Vec<drift::Route>>>,
 }
 
 pub fn router(state: AppState) -> Router {
@@ -38,6 +41,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/checks/{id}", delete(checks_delete))
         .route("/api/checks/{id}/history", get(checks_history))
         .route("/api/host/history", get(host_history))
+        .route("/api/drift", get(drift_list))
         .fallback(static_handler)
         .with_state(state)
 }
@@ -95,6 +99,11 @@ async fn overview(State(st): State<AppState>) -> Result<impl IntoResponse, Statu
     // From the Docker daemon, not sysinfo — Yagura runs in a container.
     let host = st.docker.host_name().await.unwrap_or_default();
     Ok(Json(serde_json::json!({ "host": host, "containers": rows })))
+}
+
+/// Latest route-drift sweep — each cloudflared route and whether a listener answers.
+async fn drift_list(State(st): State<AppState>) -> impl IntoResponse {
+    Json(st.drift.lock().unwrap().clone())
 }
 
 /// Host sparkline seed: recent samples per metric (`{ cpu:[{ts,value}…], … }`), one
