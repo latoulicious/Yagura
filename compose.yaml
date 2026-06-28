@@ -3,9 +3,9 @@ services:
     image: ghcr.io/latoulicious/yagura:latest
     container_name: yagura
     restart: unless-stopped
-    # Loopback-only; the Cloudflare Tunnel reaches it. 8080/8090 are dozzle/Tsugi.
-    ports:
-      - "127.0.0.1:8091:8080"
+    # Host network so drift TCP probes reach host-local services (127.0.0.1:9000 etc.)
+    # Set YAGURA_BIND=127.0.0.1:3001 in .env — default 8080 conflicts with lazyscan.
+    network_mode: host
     # Runtime config (alerts + P4). Optional — compose runs without a .env present.
     env_file:
       - path: .env
