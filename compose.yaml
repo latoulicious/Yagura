@@ -3,9 +3,9 @@ services:
     image: ghcr.io/latoulicious/yagura:latest
     container_name: yagura
     restart: unless-stopped
-    # Loopback-only; the Cloudflare Tunnel reaches it. 8080 reclaimed from dozzle.
+    # Loopback-only; the Cloudflare Tunnel reaches it. 3001 (ex-Kuma), 8080 left for lazyscan.
     ports:
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:3001:8080"
     # Runtime config (alerts + P4). Optional — compose runs without a .env present.
     env_file:
       - path: .env
