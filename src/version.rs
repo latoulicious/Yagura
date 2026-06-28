@@ -58,15 +58,16 @@ impl VersionCollector {
             ok: false,
         };
         match self.client.get(&t.url).timeout(TIMEOUT).send().await {
-            Ok(resp) if resp.status().is_success() => {
-                let json = resp.json::<serde_json::Value>().await.unwrap_or_default();
-                VersionStatus {
+            // A 2xx with an unparseable body is a failed poll, not a healthy one.
+            Ok(resp) if resp.status().is_success() => match resp.json::<serde_json::Value>().await {
+                Ok(json) => VersionStatus {
                     label: t.label.clone(),
                     version: pick(&json, &["version", "tag", "build"]),
                     commit: pick(&json, &["commit", "sha", "revision"]),
                     ok: true,
-                }
-            }
+                },
+                Err(_) => fail(),
+            },
             _ => fail(),
         }
     }

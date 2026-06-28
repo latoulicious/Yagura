@@ -11,20 +11,27 @@ import {
 } from '../api'
 import { StatusDot } from './StatusDot'
 
-// Poll one endpoint on the shared 10s cadence. Fetchers are module-stable.
+// Poll one endpoint on the shared 10s cadence. Self-chained setTimeout (not
+// setInterval) so a slow response can't overlap and let a stale result land last.
 function usePoll<T>(fetcher: () => Promise<T>, initial: T): T {
   const [data, setData] = useState<T>(initial)
   useEffect(() => {
     let on = true
-    const load = () =>
-      fetcher()
-        .then((d) => on && setData(d))
-        .catch(() => {})
-    load()
-    const t = setInterval(load, 10000)
+    let timer = 0
+    const load = async () => {
+      try {
+        const d = await fetcher()
+        if (on) setData(d)
+      } catch {
+        // transient; retry next tick
+      } finally {
+        if (on) timer = window.setTimeout(load, 10000)
+      }
+    }
+    void load()
     return () => {
       on = false
-      clearInterval(t)
+      clearTimeout(timer)
     }
   }, [fetcher])
   return data

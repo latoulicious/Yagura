@@ -174,7 +174,14 @@ fn spawn_beats(
             tick.tick().await;
             let last = {
                 let c = conn.lock().unwrap();
-                db::list_beats(&c).unwrap_or_default()
+                match db::list_beats(&c) {
+                    Ok(last) => last,
+                    // A read failure must not look like "all beats missing" → skip the tick.
+                    Err(e) => {
+                        tracing::warn!("beat scan skipped: {e}");
+                        continue;
+                    }
+                }
             };
             let now = collector::now_ts();
             for spec in registry.iter() {

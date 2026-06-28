@@ -100,7 +100,13 @@ fn target_of(service: &str) -> Option<String> {
         return None;
     }
     let host_port = rest.split('/').next().unwrap_or(rest);
-    if host_port.contains(':') {
+    // IPv6 literals are bracketed (`[::1]` / `[::1]:443`); only `]:` is a real port.
+    let has_port = if host_port.starts_with('[') {
+        host_port.contains("]:")
+    } else {
+        host_port.contains(':')
+    };
+    if has_port {
         Some(host_port.to_string())
     } else {
         Some(format!("{host_port}:{}", if scheme == "https" { 443 } else { 80 }))
@@ -119,6 +125,9 @@ mod tests {
         assert_eq!(target_of("http_status:404"), None);
         assert_eq!(target_of("tcp://host:22"), None);
         assert_eq!(target_of("hello_world"), None);
+        // IPv6 literals: default port only when no `]:` port is present.
+        assert_eq!(target_of("https://[::1]").as_deref(), Some("[::1]:443"));
+        assert_eq!(target_of("http://[::1]:8080").as_deref(), Some("[::1]:8080"));
     }
 
     #[test]

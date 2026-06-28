@@ -17,9 +17,12 @@ pub fn registry() -> Vec<BeatSpec> {
         .split(',')
         .filter_map(|p| {
             let (name, secs) = p.trim().split_once('=')?;
-            Some(BeatSpec {
-                name: name.trim().to_string(),
-                deadline_s: secs.trim().parse().ok()?,
+            let name = name.trim();
+            let deadline_s: i64 = secs.trim().parse().ok()?;
+            // Drop garbage: empty names and non-positive deadlines (=3600, beat=0).
+            (!name.is_empty() && deadline_s > 0).then(|| BeatSpec {
+                name: name.to_string(),
+                deadline_s,
             })
         })
         .collect()
@@ -32,9 +35,11 @@ mod tests {
     #[test]
     fn registry_parses_pairs_skips_garbage() {
         // SAFETY: single-threaded test; no other thread reads the env here.
-        unsafe { std::env::set_var("YAGURA_BEATS", "hozon-backup=86400, deploy=3600 , bad") }
+        unsafe {
+            std::env::set_var("YAGURA_BEATS", "hozon-backup=86400, deploy=3600 , bad, =5, z=0, n=-1")
+        }
         let r = registry();
-        assert_eq!(r.len(), 2); // "bad" (no =) dropped
+        assert_eq!(r.len(), 2); // bad (no =), empty name, deadline 0/-1 all dropped
         assert_eq!(r[0].name, "hozon-backup");
         assert_eq!(r[0].deadline_s, 86400);
         assert_eq!(r[1].name, "deploy");

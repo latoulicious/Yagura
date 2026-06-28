@@ -72,7 +72,7 @@ pub struct HostPoint {
 pub enum DbMsg {
     Sample(Sample),
     Result(CheckResult),
-    Beat(String),
+    Beat(String, i64),
     AddCheck(NewCheck, oneshot::Sender<rusqlite::Result<i64>>),
     DelCheck(i64, oneshot::Sender<rusqlite::Result<usize>>),
 }
@@ -139,11 +139,11 @@ pub fn spawn_writer(path: &str) -> Result<mpsc::Sender<DbMsg>> {
                         trim(&conn);
                     }
                 }
-                DbMsg::Beat(name) => {
+                DbMsg::Beat(name, ts) => {
                     if let Err(e) = conn.execute(
                         "INSERT INTO beats (name, last_ts) VALUES (?1, ?2) \
                          ON CONFLICT(name) DO UPDATE SET last_ts = excluded.last_ts",
-                        rusqlite::params![name, now_ts()],
+                        rusqlite::params![name, ts],
                     ) {
                         tracing::warn!("beat upsert failed: {e}");
                     }

@@ -111,18 +111,32 @@ async fn overview(State(st): State<AppState>) -> Result<impl IntoResponse, Statu
 }
 
 /// Latest route-drift sweep — each cloudflared route and whether a listener answers.
-async fn drift_list(State(st): State<AppState>) -> impl IntoResponse {
-    Json(st.drift.lock().unwrap().clone())
+async fn drift_list(State(st): State<AppState>) -> Result<impl IntoResponse, StatusCode> {
+    let routes = st
+        .drift
+        .lock()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .clone();
+    Ok(Json(routes))
 }
 
 /// Latest per-service version/commit poll.
-async fn versions_list(State(st): State<AppState>) -> impl IntoResponse {
-    Json(st.versions.lock().unwrap().clone())
+async fn versions_list(State(st): State<AppState>) -> Result<impl IntoResponse, StatusCode> {
+    let versions = st
+        .versions
+        .lock()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .clone();
+    Ok(Json(versions))
 }
 
-/// Heartbeat ingest — a job checks in; stamp last-seen for the deadman check.
+/// Heartbeat ingest — a registered job checks in; stamp receipt time for the deadman.
+/// Unknown names are rejected so the table can't grow unbounded from the tunnel.
 async fn beat(State(st): State<AppState>, Path(name): Path<String>) -> StatusCode {
-    match st.db_write.send(db::DbMsg::Beat(name)).await {
+    if !st.beats.iter().any(|spec| spec.name == name) {
+        return StatusCode::NOT_FOUND;
+    }
+    match st.db_write.send(db::DbMsg::Beat(name, now_ts())).await {
         Ok(_) => StatusCode::NO_CONTENT,
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
     }
