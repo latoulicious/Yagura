@@ -51,6 +51,7 @@ struct ContainerRow {
     cpu: Option<f64>,
     mem: Option<f64>,
     mem_limit: Option<f64>,
+    created: i64,
 }
 
 /// Container grid: bollard list merged with the latest persisted cpu/ram.
@@ -85,11 +86,14 @@ async fn overview(State(st): State<AppState>) -> Result<impl IntoResponse, Statu
                 name: c.name,
                 state: c.state,
                 status: c.status,
+                created: c.created,
             }
         })
         .collect();
 
-    Ok(Json(serde_json::json!({ "containers": rows })))
+    // Single-host: one name for the whole grid (frontend renders it per row).
+    let host = sysinfo::System::host_name().unwrap_or_default();
+    Ok(Json(serde_json::json!({ "host": host, "containers": rows })))
 }
 
 /// Host sparkline seed: recent samples per metric (`{ cpu:[{ts,value}…], … }`), one

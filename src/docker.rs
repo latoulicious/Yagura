@@ -16,6 +16,8 @@ pub struct ContainerInfo {
     pub name: String,
     pub state: String,
     pub status: String,
+    /// Unix seconds the container was created (bollard summary; already fetched).
+    pub created: i64,
 }
 
 pub struct DockerCollector {
@@ -46,6 +48,7 @@ impl DockerCollector {
                     .unwrap_or_default(),
                 state: c.state.map(state_str).unwrap_or("").to_string(),
                 status: c.status.unwrap_or_default(),
+                created: c.created.unwrap_or(0),
             })
             .collect())
     }
