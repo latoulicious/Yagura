@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS checks (id INTEGER PRIMARY KEY, kind TEXT, target TEX
 CREATE TABLE IF NOT EXISTS check_results (ts INTEGER, check_id INTEGER, up INTEGER, latency_ms INTEGER);
 CREATE INDEX IF NOT EXISTS idx_check_results_id_ts ON check_results(check_id, ts);
 CREATE TABLE IF NOT EXISTS events (ts INTEGER, kind TEXT, payload TEXT);
+CREATE TABLE IF NOT EXISTS beats (name TEXT PRIMARY KEY, last_ts INTEGER);
 ";
 
 /// A probe definition awaiting its row id from the writer.
@@ -71,6 +72,7 @@ pub struct HostPoint {
 pub enum DbMsg {
     Sample(Sample),
     Result(CheckResult),
+    Beat(String),
     AddCheck(NewCheck, oneshot::Sender<rusqlite::Result<i64>>),
     DelCheck(i64, oneshot::Sender<rusqlite::Result<usize>>),
 }
@@ -135,6 +137,15 @@ pub fn spawn_writer(path: &str) -> Result<mpsc::Sender<DbMsg>> {
                     n += 1;
                     if n.is_multiple_of(TRIM_EVERY) {
                         trim(&conn);
+                    }
+                }
+                DbMsg::Beat(name) => {
+                    if let Err(e) = conn.execute(
+                        "INSERT INTO beats (name, last_ts) VALUES (?1, ?2) \
+                         ON CONFLICT(name) DO UPDATE SET last_ts = excluded.last_ts",
+                        rusqlite::params![name, now_ts()],
+                    ) {
+                        tracing::warn!("beat upsert failed: {e}");
                     }
                 }
                 DbMsg::AddCheck(c, reply) => {
@@ -262,6 +273,13 @@ pub fn history(conn: &Connection, check_id: i64, limit: i64) -> Result<Vec<Resul
     let mut v = rows.collect::<rusqlite::Result<Vec<_>>>()?;
     v.reverse();
     Ok(v)
+}
+
+/// Last-seen timestamp per heartbeat name, for the deadman check + API.
+pub fn list_beats(conn: &Connection) -> Result<std::collections::HashMap<String, i64>> {
+    let mut stmt = conn.prepare("SELECT name, last_ts FROM beats")?;
+    let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
 /// Recent host samples (last `HOST_WINDOW_SECS`), oldest-first — the rolling-sparkline
