@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Moon, Sun } from 'lucide-react'
-import { fetchOverview, type Container, type Host } from './api'
+import { fetchOverview, type Container } from './api'
+import { Footer } from './components/Footer'
 import { LogView } from './components/LogView'
 import { Overview } from './components/Overview'
 import { Uptime } from './components/Uptime'
@@ -10,10 +11,10 @@ type Tab = 'logs' | 'overview' | 'uptime'
 
 export function App() {
   const [containers, setContainers] = useState<Container[]>([])
-  const [host, setHost] = useState<Host>({})
   const [selected, setSelected] = useState<string | null>(null)
   const [tab, setTab] = useState<Tab>('overview')
   const [theme, setTheme] = usePersisted<'dark' | 'light'>('yagura.theme', 'light')
+  const [updatedAt, setUpdatedAt] = useState<number | null>(null)
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -23,10 +24,10 @@ export function App() {
     let on = true
     const load = () =>
       fetchOverview()
-        .then((o) => {
+        .then((c) => {
           if (!on) return
-          setContainers(o.containers)
-          setHost(o.host)
+          setContainers(c)
+          setUpdatedAt(Date.now())
         })
         .catch(() => {})
     load()
@@ -78,11 +79,12 @@ export function App() {
         {tab === 'logs' ? (
           <LogView containers={containers} selected={selected} onSelect={setSelected} />
         ) : tab === 'overview' ? (
-          <Overview containers={containers} host={host} />
+          <Overview containers={containers} />
         ) : (
           <Uptime />
         )}
       </main>
+      <Footer containers={containers} updatedAt={updatedAt} />
     </div>
   )
 }

@@ -8,9 +8,8 @@ const SOURCE: &str = "host";
 // Fallback divisor for throughput when there's no prior tick to measure against.
 const TICK_SECS: f64 = 5.0;
 
-/// Curated host metrics via sysinfo — the ~9 numbers anyone reads, not Netdata's
-/// firehose. Refresh state (cpu baseline, net/disk deltas) lives across ticks, so
-/// `Inner` is held behind a `Mutex` (interior mutability, mirrors `ProbeCollector`).
+/// Curated host metrics via sysinfo — the ~9 read numbers, not Netdata's firehose.
+/// Refresh state (cpu baseline, net/disk deltas) lives across ticks → `Mutex<Inner>`.
 pub struct HostCollector {
     inner: Mutex<Inner>,
 }
@@ -81,9 +80,8 @@ impl Collector for HostCollector {
         let swap_total = g.sys.total_swap() as f64;
         let (disk_used, disk_total) = root_disk(&g.disks);
 
-        // sysinfo reports disk I/O per process only; sum the per-tick deltas for a
-        // host total. ponytail: reads 0 on macOS dev without entitlement — fine,
-        // works on the Linux target.
+        // Disk I/O is per-process in sysinfo; sum per-tick deltas for a host total.
+        // ponytail: reads 0 on macOS dev without entitlement; works on Linux target.
         let (mut read, mut written) = (0u64, 0u64);
         for p in g.sys.processes().values() {
             let d = p.disk_usage();

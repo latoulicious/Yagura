@@ -6,8 +6,9 @@ use tokio::sync::{mpsc, oneshot};
 
 const RETENTION_SECS: i64 = 48 * 3600;
 const TRIM_EVERY: u64 = 1000;
-// 30-min buckets → ~96 points across the 48h window for a calm sparkline.
-const HOST_BUCKET_S: i64 = 1800;
+// Sparklines show a live rolling window, not the full 48h — last few minutes of
+// host samples, seeded on load then advanced over the SSE stream.
+const HOST_WINDOW_SECS: i64 = 600;
 
 // `samples` + `check_results` are the high-volume tables; `checks`/`events` are
 // config/log. Indexes mirror the read patterns (latest-per-key, per-id history).
@@ -263,16 +264,15 @@ pub fn history(conn: &Connection, check_id: i64, limit: i64) -> Result<Vec<Resul
     Ok(v)
 }
 
-/// 48h of host samples, averaged into 30-min buckets per metric, oldest-first.
-/// Scans the indexed `source='host'` range — same class as `latest_samples`.
+/// Recent host samples (last `HOST_WINDOW_SECS`), oldest-first — the rolling-sparkline
+/// seed. Time-floored + indexed, so it's a small scan run once per page load.
 pub fn host_history(conn: &Connection) -> Result<Vec<HostPoint>> {
-    let cutoff = now_ts() - RETENTION_SECS;
+    let cutoff = now_ts() - HOST_WINDOW_SECS;
     let mut stmt = conn.prepare(
-        "SELECT metric, (ts / ?1) * ?1 AS bucket, AVG(value) \
-         FROM samples WHERE source = 'host' AND ts >= ?2 \
-         GROUP BY metric, bucket ORDER BY bucket",
+        "SELECT metric, ts, value FROM samples \
+         WHERE source = 'host' AND ts >= ?1 ORDER BY ts",
     )?;
-    let rows = stmt.query_map(rusqlite::params![HOST_BUCKET_S, cutoff], |r| {
+    let rows = stmt.query_map([cutoff], |r| {
         Ok(HostPoint {
             metric: r.get(0)?,
             ts: r.get(1)?,
@@ -339,23 +339,23 @@ mod tests {
     }
 
     #[test]
-    fn host_history_buckets_and_averages() {
+    fn host_history_recent_oldest_first_per_metric() {
         let conn = mem();
-        let base = (now_ts() / HOST_BUCKET_S) * HOST_BUCKET_S; // a bucket boundary, within 48h
-        insert_host(&conn, base + 10, "cpu", 10.0);
-        insert_host(&conn, base + 20, "cpu", 20.0); // same bucket as above
-        insert_host(&conn, base + HOST_BUCKET_S + 5, "cpu", 50.0); // next bucket
+        let base = now_ts() - 100; // inside the rolling window
+        for i in 0..4 {
+            insert_host(&conn, base + i * 5, "cpu", (i * 10) as f64);
+        }
+        insert_host(&conn, base, "mem_used", 1.0);
+        insert_host(&conn, now_ts() - 100_000, "cpu", 999.0); // older than the window
 
-        let pts: Vec<_> = host_history(&conn)
+        let cpu: Vec<_> = host_history(&conn)
             .unwrap()
             .into_iter()
             .filter(|p| p.metric == "cpu")
             .collect();
-        assert_eq!(pts.len(), 2); // two buckets
-        assert_eq!(pts[0].ts, base);
-        assert!((pts[0].value - 15.0).abs() < 1e-9); // avg(10, 20)
-        assert_eq!(pts[1].ts, base + HOST_BUCKET_S);
-        assert!((pts[1].value - 50.0).abs() < 1e-9);
+        assert_eq!(cpu.len(), 4); // stale sample excluded by the time floor
+        assert_eq!(cpu.first().unwrap().ts, base); // oldest-first
+        assert!((cpu.last().unwrap().value - 30.0).abs() < 1e-9);
     }
 
     #[test]

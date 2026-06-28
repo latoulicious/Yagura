@@ -2,7 +2,9 @@ type GroupDef = { key: string; label: string; match: string }
 
 const GROUPS: GroupDef[] = [
   { key: 'kanjo', label: 'Kanjo', match: 'kanjo' },
-  { key: 'lazyscan', label: 'Lazyscan', match: 'lazyscan' },
+  // Staging match must precede the bare prod match, else prod swallows it.
+  { key: 'lazyscan-staging', label: 'Lazyscan Staging', match: 'lazyscan-staging' },
+  { key: 'lazyscan', label: 'Lazyscan Prod', match: 'lazyscan' },
   { key: 'raeon', label: 'Raeon', match: 'raeon' },
   { key: 'infra', label: 'Infra', match: 'shared' },
 ]
