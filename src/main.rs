@@ -7,6 +7,7 @@ mod docker;
 mod drift;
 mod host;
 mod probe;
+mod version;
 
 use crate::collector::{Collector, Sample};
 use std::io::IsTerminal;
@@ -19,6 +20,8 @@ const TICK_SECS: u64 = 5;
 const DRIFT_TICK_SECS: u64 = 30;
 // Heartbeat deadlines are minutes-to-hours; a 60s deadman scan is fine-grained enough.
 const BEAT_TICK_SECS: u64 = 60;
+// Deploys are infrequent; poll each service /version once a minute.
+const VERSION_TICK_SECS: u64 = 60;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -52,6 +55,9 @@ async fn main() -> anyhow::Result<()> {
     let beats = Arc::new(beat::registry());
     spawn_beats(beats.clone(), Mutex::new(db::open_read(&db_path)?), status_alerts);
 
+    let versions_state = Arc::new(Mutex::new(Vec::<version::VersionStatus>::new()));
+    spawn_versions(version::VersionCollector::new(http), versions_state.clone());
+
     let app = api::router(api::AppState {
         docker,
         db_read,
@@ -59,6 +65,7 @@ async fn main() -> anyhow::Result<()> {
         db_write: writer,
         drift: drift_state,
         beats,
+        versions: versions_state,
     });
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     tracing::info!("yagura listening on {bind}");
@@ -184,6 +191,25 @@ fn spawn_beats(
                     })
                     .await;
             }
+        }
+    });
+}
+
+/// Version poll loop: poll each service `/version` and stash the latest set for the
+/// API. No-op when nothing is configured.
+fn spawn_versions(
+    collector: version::VersionCollector,
+    state: Arc<Mutex<Vec<version::VersionStatus>>>,
+) {
+    if collector.is_empty() {
+        return;
+    }
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(Duration::from_secs(VERSION_TICK_SECS));
+        loop {
+            tick.tick().await;
+            let v = collector.check().await;
+            *state.lock().unwrap() = v;
         }
     });
 }

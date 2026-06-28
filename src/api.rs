@@ -3,6 +3,7 @@ use crate::collector::{Sample, now_ts};
 use crate::db;
 use crate::docker::DockerCollector;
 use crate::drift;
+use crate::version;
 use axum::extract::{Path, Query, State};
 use axum::http::{StatusCode, Uri, header};
 use axum::response::IntoResponse;
@@ -33,6 +34,8 @@ pub struct AppState {
     pub drift: Arc<Mutex<Vec<drift::Route>>>,
     // Expected heartbeats (registry), joined with last-seen at request time.
     pub beats: Arc<Vec<beat::BeatSpec>>,
+    // Latest per-service version poll, refreshed by the version ticker.
+    pub versions: Arc<Mutex<Vec<version::VersionStatus>>>,
 }
 
 pub fn router(state: AppState) -> Router {
@@ -46,6 +49,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/host/history", get(host_history))
         .route("/api/drift", get(drift_list))
         .route("/api/beats", get(beats_list))
+        .route("/api/versions", get(versions_list))
         .route("/beat/{name}", post(beat))
         .fallback(static_handler)
         .with_state(state)
@@ -109,6 +113,11 @@ async fn overview(State(st): State<AppState>) -> Result<impl IntoResponse, Statu
 /// Latest route-drift sweep — each cloudflared route and whether a listener answers.
 async fn drift_list(State(st): State<AppState>) -> impl IntoResponse {
     Json(st.drift.lock().unwrap().clone())
+}
+
+/// Latest per-service version/commit poll.
+async fn versions_list(State(st): State<AppState>) -> impl IntoResponse {
+    Json(st.versions.lock().unwrap().clone())
 }
 
 /// Heartbeat ingest — a job checks in; stamp last-seen for the deadman check.
