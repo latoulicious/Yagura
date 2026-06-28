@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react'
 import { Moon, Sun } from 'lucide-react'
 import { fetchOverview, fmtUptime, type Bufs, type Container, type Live, type Sample } from './api'
+import { Drift } from './components/Drift'
 import { Footer } from './components/Footer'
 import { LogView } from './components/LogView'
 import { Overview } from './components/Overview'
 import { Uptime } from './components/Uptime'
 import { usePersisted } from './usePersisted'
 
-type Tab = 'logs' | 'overview' | 'uptime'
+type Tab = 'logs' | 'overview' | 'uptime' | 'drift'
 
 // Rolling sparkline window for the container grid (30 points).
 const WINDOW = 30
@@ -105,6 +106,9 @@ export function App() {
           <TabBtn active={tab === 'logs'} onClick={() => setTab('logs')}>
             Logs
           </TabBtn>
+          <TabBtn active={tab === 'drift'} onClick={() => setTab('drift')}>
+            Drift
+          </TabBtn>
           {uptime != null && (
             <span className="ml-auto font-mono text-xs text-text-3">up {fmtUptime(uptime)}</span>
           )}
@@ -115,8 +119,10 @@ export function App() {
           <LogView containers={containers} selected={selected} onSelect={setSelected} />
         ) : tab === 'overview' ? (
           <Overview containers={containers} host={host} live={live} bufs={bufs} />
-        ) : (
+        ) : tab === 'uptime' ? (
           <Uptime />
+        ) : (
+          <Drift />
         )}
       </main>
       <Footer containers={containers} updatedAt={updatedAt} />

@@ -35,6 +35,28 @@ export async function fetchOverview(): Promise<Overview> {
   return { host: j.host ?? '', containers: j.containers ?? [] }
 }
 
+export type Route = { hostname: string; target: string; up: boolean; ts: number }
+export type Beat = { name: string; deadline_s: number; last_ts: number | null; missing: boolean }
+export type Version = { label: string; version: string | null; commit: string | null; ok: boolean }
+
+export async function fetchDrift(): Promise<Route[]> {
+  const r = await fetch('/api/drift')
+  if (!r.ok) throw new Error(`drift ${r.status}`)
+  return r.json()
+}
+
+export async function fetchBeats(): Promise<Beat[]> {
+  const r = await fetch('/api/beats')
+  if (!r.ok) throw new Error(`beats ${r.status}`)
+  return r.json()
+}
+
+export async function fetchVersions(): Promise<Version[]> {
+  const r = await fetch('/api/versions')
+  if (!r.ok) throw new Error(`versions ${r.status}`)
+  return r.json()
+}
+
 export async function fetchHostHistory(): Promise<HostSeries> {
   const r = await fetch('/api/host/history')
   if (!r.ok) throw new Error(`host history ${r.status}`)
