@@ -60,6 +60,25 @@ export async function fetchVersions(): Promise<Version[]> {
   return r.json()
 }
 
+export type Release = {
+  env: string
+  service: string
+  commit: string
+  tag: string
+  deployed_at: number | null
+  status: string
+}
+
+// ok:false = Tsugi agent unreachable (down / RPC unimplemented), distinct from an
+// empty list — the Deploy tab renders the two differently.
+export type Releases = { ok: boolean; releases: Release[]; reason?: string }
+
+export async function fetchReleases(): Promise<Releases> {
+  const r = await fetch('/api/releases')
+  if (!r.ok) throw new Error(`releases ${r.status}`)
+  return r.json()
+}
+
 export async function fetchHostHistory(): Promise<HostSeries> {
   const r = await fetch('/api/host/history')
   if (!r.ok) throw new Error(`host history ${r.status}`)

@@ -5,10 +5,11 @@ import { Drift } from './components/Drift'
 import { Footer } from './components/Footer'
 import { LogView } from './components/LogView'
 import { Overview } from './components/Overview'
+import { Releases } from './components/Releases'
 import { Uptime } from './components/Uptime'
 import { usePersisted } from './usePersisted'
 
-type Tab = 'logs' | 'overview' | 'uptime' | 'drift'
+type Tab = 'logs' | 'overview' | 'uptime' | 'drift' | 'deploy'
 
 // Rolling sparkline window for the container grid (30 points).
 const WINDOW = 30
@@ -109,6 +110,9 @@ export function App() {
           <TabBtn active={tab === 'drift'} onClick={() => setTab('drift')}>
             Drift
           </TabBtn>
+          <TabBtn active={tab === 'deploy'} onClick={() => setTab('deploy')}>
+            Deploy
+          </TabBtn>
           {uptime != null && (
             <span className="ml-auto font-mono text-xs text-text-3">up {fmtUptime(uptime)}</span>
           )}
@@ -121,8 +125,10 @@ export function App() {
           <Overview containers={containers} host={host} live={live} bufs={bufs} />
         ) : tab === 'uptime' ? (
           <Uptime />
-        ) : (
+        ) : tab === 'drift' ? (
           <Drift />
+        ) : (
+          <Releases />
         )}
       </main>
       <Footer containers={containers} updatedAt={updatedAt} />

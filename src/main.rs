@@ -37,6 +37,9 @@ async fn main() -> anyhow::Result<()> {
 
     let bind = std::env::var("YAGURA_BIND").unwrap_or_else(|_| "127.0.0.1:8080".into());
     let db_path = std::env::var("YAGURA_DB").unwrap_or_else(|_| "yagura.db".into());
+    // Localhost Tsugi agent. Lazy dial — fine if it's not up yet.
+    let tsugi_addr =
+        std::env::var("YAGURA_TSUGI_ADDR").unwrap_or_else(|_| "http://127.0.0.1:50051".into());
 
     let writer = db::spawn_writer(&db_path)?;
     let db_read = Arc::new(Mutex::new(db::open_read(&db_path)?));
@@ -63,6 +66,8 @@ async fn main() -> anyhow::Result<()> {
     let versions_state = Arc::new(Mutex::new(Vec::<version::VersionStatus>::new()));
     spawn_versions(version::VersionCollector::new(http), versions_state.clone());
 
+    let tsugi = agent::TsugiClient::connect(tsugi_addr)?;
+
     let app = api::router(api::AppState {
         docker,
         db_read,
@@ -71,6 +76,7 @@ async fn main() -> anyhow::Result<()> {
         drift: drift_state,
         beats,
         versions: versions_state,
+        tsugi,
     });
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     tracing::info!("yagura listening on {bind}");

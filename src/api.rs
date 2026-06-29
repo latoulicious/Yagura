@@ -1,3 +1,4 @@
+use crate::agent;
 use crate::beat;
 use crate::collector::{Sample, now_ts};
 use crate::db;
@@ -39,6 +40,8 @@ pub struct AppState {
     pub beats: Arc<Vec<beat::BeatSpec>>,
     // Latest per-service version poll, refreshed by the version ticker.
     pub versions: Arc<Mutex<Vec<version::VersionStatus>>>,
+    // gRPC client to the localhost Tsugi agent — release history.
+    pub tsugi: agent::TsugiClient,
 }
 
 pub fn router(state: AppState) -> Router {
@@ -53,6 +56,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/drift", get(drift_list))
         .route("/api/beats", get(beats_list))
         .route("/api/versions", get(versions_list))
+        .route("/api/releases", get(releases_list))
         .route("/beat/{name}", post(beat))
         .fallback(static_handler)
         .with_state(state)
@@ -138,6 +142,20 @@ async fn versions_list(State(st): State<AppState>) -> Result<impl IntoResponse, 
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .clone();
     Ok(Json(versions))
+}
+
+/// Release-per-env list from the Tsugi agent. A gRPC error — agent down or the RPC
+/// unimplemented — returns `ok:false` (HTTP 200) so the tab shows an "unreachable" empty
+/// state instead of failing the fetch. Calm-until-broken.
+async fn releases_list(State(st): State<AppState>) -> impl IntoResponse {
+    match st.tsugi.list_releases().await {
+        Ok(releases) => Json(serde_json::json!({ "ok": true, "releases": releases })),
+        Err(status) => Json(serde_json::json!({
+            "ok": false,
+            "releases": [],
+            "reason": format!("{:?}", status.code()),
+        })),
+    }
 }
 
 /// Heartbeat ingest — a registered job checks in; stamp receipt time for the deadman.
