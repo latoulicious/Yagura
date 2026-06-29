@@ -10,12 +10,15 @@ mod probe;
 mod version;
 
 use crate::collector::{Collector, Sample};
+use futures_util::StreamExt;
 use std::io::IsTerminal;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::{broadcast, mpsc};
 
 const TICK_SECS: u64 = 5;
+// Docker event stream can end on a daemon restart; wait this long before resubscribing.
+const EVENTS_RECONNECT_SECS: u64 = 5;
 // Routes change rarely; a 30s drift sweep is plenty and keeps the TCP probes cheap.
 const DRIFT_TICK_SECS: u64 = 30;
 // Heartbeat deadlines are minutes-to-hours; a 60s deadman scan is fine-grained enough.
@@ -43,6 +46,7 @@ async fn main() -> anyhow::Result<()> {
 
     let thresholds = alert::spawn_thresholds(http.clone());
     spawn_collector(docker.clone(), host, writer.clone(), events.clone(), thresholds);
+    spawn_docker_events(docker.clone(), writer.clone());
 
     let alerts = alert::spawn(http.clone());
     let prober = Arc::new(probe::ProbeCollector::new(http.clone(), db::open_read(&db_path)?));
@@ -94,6 +98,27 @@ fn spawn_collector(
             for s in host_samples {
                 fan(&events, &writer, s).await;
             }
+        }
+    });
+}
+
+/// Subscribe to the Docker daemon event stream and persist container lifecycle
+/// events (start/die/restart/oom/health) for the overview feed. The stream ends on a
+/// daemon restart, so resubscribe after a short backoff — the feed self-heals.
+fn spawn_docker_events(docker: Arc<docker::DockerCollector>, writer: mpsc::Sender<db::DbMsg>) {
+    tokio::spawn(async move {
+        loop {
+            {
+                let stream = docker.events();
+                futures_util::pin_mut!(stream);
+                while let Some(ev) = stream.next().await {
+                    if writer.send(db::DbMsg::Event(ev)).await.is_err() {
+                        return; // writer gone → app shutting down
+                    }
+                }
+            }
+            tracing::warn!("docker event stream ended; reconnecting in {EVENTS_RECONNECT_SECS}s");
+            tokio::time::sleep(Duration::from_secs(EVENTS_RECONNECT_SECS)).await;
         }
     });
 }

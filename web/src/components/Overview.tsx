@@ -52,39 +52,50 @@ export function Overview({
               const memPct = pct(m.mem ?? c.mem ?? undefined, lim ?? undefined)
               const st = status(c.state)
               return (
-                <div
-                  key={c.id}
-                  className="flex h-10 items-center gap-4 border-b border-border-subtle px-4 hover:bg-elevated"
-                >
-                  <div className="flex min-w-0 flex-1 items-center gap-2">
-                    <StatusDot tone={tone(st)} />
-                    <span className="truncate text-text-2">{shortLabel(c.name)}</span>
+                <div key={c.id} className="border-b border-border-subtle">
+                  <div className="flex h-10 items-center gap-4 px-4 hover:bg-elevated">
+                    <div className="flex min-w-0 flex-1 items-center gap-2">
+                      <StatusDot tone={tone(st)} />
+                      <span className="truncate text-text-2">{shortLabel(c.name)}</span>
+                    </div>
+                    <div className="w-40 truncate text-text-3">{host}</div>
+                    <div className="w-28">
+                      {st === 'healthy' ? (
+                        <span className="text-text-3">{c.state}</span>
+                      ) : (
+                        <StatusBadge status={st} />
+                      )}
+                    </div>
+                    <div className="w-28 font-mono text-xs text-text-3">{ago(c.created)}</div>
+                    <div className="flex w-36 items-center justify-end gap-2 font-mono text-text-2">
+                      {running && (
+                        <div className="h-6 w-16">
+                          <Sparkline data={b.cpu} tone={toneForPct(cpu)} />
+                        </div>
+                      )}
+                      <span>{running ? fmtPct(cpu) : '—'}</span>
+                    </div>
+                    <div className="flex w-48 items-center justify-end gap-2 font-mono text-text-2">
+                      {running && (
+                        <div className="h-6 w-16">
+                          <Sparkline data={b.mem} tone={toneForPct(memPct)} />
+                        </div>
+                      )}
+                      <span>{running ? fmtBytes(m.mem ?? c.mem) : '—'}</span>
+                    </div>
                   </div>
-                  <div className="w-40 truncate text-text-3">{host}</div>
-                  <div className="w-28">
-                    {st === 'healthy' ? (
-                      <span className="text-text-3">{c.state}</span>
-                    ) : (
-                      <StatusBadge status={st} />
-                    )}
-                  </div>
-                  <div className="w-28 font-mono text-xs text-text-3">{ago(c.created)}</div>
-                  <div className="flex w-36 items-center justify-end gap-2 font-mono text-text-2">
-                    {running && (
-                      <div className="h-6 w-16">
-                        <Sparkline data={b.cpu} tone={toneForPct(cpu)} />
-                      </div>
-                    )}
-                    <span>{running ? fmtPct(cpu) : '—'}</span>
-                  </div>
-                  <div className="flex w-48 items-center justify-end gap-2 font-mono text-text-2">
-                    {running && (
-                      <div className="h-6 w-16">
-                        <Sparkline data={b.mem} tone={toneForPct(memPct)} />
-                      </div>
-                    )}
-                    <span>{running ? fmtBytes(m.mem ?? c.mem) : '—'}</span>
-                  </div>
+                  {/* Recent lifecycle events under the container — calm, muted, newest-first.
+                      Bad-event tinting (die/oom) can come later; the word carries it. */}
+                  {c.events?.length ? (
+                    <div className="flex flex-wrap gap-x-3 gap-y-0.5 px-4 pb-1.5 pl-8 font-mono text-[11px] text-text-3">
+                      {c.events.map((e, i) => (
+                        <span key={i}>
+                          {e.kind}
+                          {e.payload ? ` ${e.payload}` : ''} · {ago(e.ts)}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
               )
             })}

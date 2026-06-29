@@ -1,3 +1,5 @@
+export type ContainerEvent = { ts: number; kind: string; payload: string }
+
 export type Container = {
   id: string
   name: string
@@ -7,6 +9,7 @@ export type Container = {
   mem: number | null
   mem_limit: number | null
   created: number
+  events: ContainerEvent[]
 }
 
 export type Sample = { ts: number; source: string; metric: string; value: number }

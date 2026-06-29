@@ -1,4 +1,4 @@
-use crate::collector::{CheckResult, Sample, now_ts};
+use crate::collector::{CheckResult, Event, Sample, now_ts};
 use anyhow::Result;
 use rusqlite::Connection;
 use serde::Serialize;
@@ -18,7 +18,8 @@ CREATE INDEX IF NOT EXISTS idx_samples_src_metric_ts ON samples(source, metric, 
 CREATE TABLE IF NOT EXISTS checks (id INTEGER PRIMARY KEY, kind TEXT, target TEXT, interval_s INTEGER, enabled INTEGER);
 CREATE TABLE IF NOT EXISTS check_results (ts INTEGER, check_id INTEGER, up INTEGER, latency_ms INTEGER);
 CREATE INDEX IF NOT EXISTS idx_check_results_id_ts ON check_results(check_id, ts);
-CREATE TABLE IF NOT EXISTS events (ts INTEGER, kind TEXT, payload TEXT);
+CREATE TABLE IF NOT EXISTS events (ts INTEGER, source TEXT, kind TEXT, payload TEXT);
+CREATE INDEX IF NOT EXISTS idx_events_source_ts ON events(source, ts);
 CREATE TABLE IF NOT EXISTS beats (name TEXT PRIMARY KEY, last_ts INTEGER);
 ";
 
@@ -60,6 +61,15 @@ pub struct ResultRow {
     pub latency_ms: Option<i64>,
 }
 
+/// One container lifecycle event for the overview feed (source is the grouping key,
+/// not re-serialized per row).
+#[derive(Serialize)]
+pub struct EventRow {
+    pub ts: i64,
+    pub kind: String,
+    pub payload: String,
+}
+
 /// One downsampled host point — a metric's average over a 30-min bucket.
 pub struct HostPoint {
     pub metric: String,
@@ -72,6 +82,7 @@ pub struct HostPoint {
 pub enum DbMsg {
     Sample(Sample),
     Result(CheckResult),
+    Event(Event),
     Beat(String, i64),
     AddCheck(NewCheck, oneshot::Sender<rusqlite::Result<i64>>),
     DelCheck(i64, oneshot::Sender<rusqlite::Result<usize>>),
@@ -102,6 +113,7 @@ fn trim(conn: &Connection) {
     let cutoff = now_ts() - RETENTION_SECS;
     let _ = conn.execute("DELETE FROM samples WHERE ts < ?1", [cutoff]);
     let _ = conn.execute("DELETE FROM check_results WHERE ts < ?1", [cutoff]);
+    let _ = conn.execute("DELETE FROM events WHERE ts < ?1", [cutoff]);
 }
 
 /// Spawn the single writer task (owns the only write connection) and return the
@@ -137,6 +149,14 @@ pub fn spawn_writer(path: &str) -> Result<mpsc::Sender<DbMsg>> {
                     n += 1;
                     if n.is_multiple_of(TRIM_EVERY) {
                         trim(&conn);
+                    }
+                }
+                DbMsg::Event(e) => {
+                    if let Err(err) = conn.execute(
+                        "INSERT INTO events (ts, source, kind, payload) VALUES (?1, ?2, ?3, ?4)",
+                        rusqlite::params![e.ts, e.source, e.kind, e.payload],
+                    ) {
+                        tracing::warn!("event insert failed: {err}");
                     }
                 }
                 DbMsg::Beat(name, ts) => {
@@ -302,6 +322,33 @@ pub fn host_history(conn: &Connection) -> Result<Vec<HostPoint>> {
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
+/// Recent container events since `cutoff`, newest-first, grouped by source and
+/// capped at `per_source` each — the overview feed. Lifecycle events are sparse, so
+/// one indexed scan over the window is cheap.
+pub fn recent_events(
+    conn: &Connection,
+    cutoff: i64,
+    per_source: usize,
+) -> Result<std::collections::HashMap<String, Vec<EventRow>>> {
+    let mut stmt = conn.prepare(
+        "SELECT source, ts, kind, payload FROM events WHERE ts >= ?1 ORDER BY ts DESC",
+    )?;
+    let mut rows = stmt.query([cutoff])?;
+    let mut out: std::collections::HashMap<String, Vec<EventRow>> = std::collections::HashMap::new();
+    while let Some(r) = rows.next()? {
+        let source: String = r.get(0)?;
+        let bucket = out.entry(source).or_default();
+        if bucket.len() < per_source {
+            bucket.push(EventRow {
+                ts: r.get(1)?,
+                kind: r.get(2)?,
+                payload: r.get(3)?,
+            });
+        }
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -376,6 +423,34 @@ mod tests {
         assert_eq!(cpu.len(), 4); // stale sample excluded by the time floor
         assert_eq!(cpu.first().unwrap().ts, base); // oldest-first
         assert!((cpu.last().unwrap().value - 30.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn recent_events_groups_caps_and_windows() {
+        let conn = mem();
+        let now = now_ts();
+        let ins = |ts: i64, src: &str, kind: &str| {
+            conn.execute(
+                "INSERT INTO events (ts, source, kind, payload) VALUES (?1, ?2, ?3, '')",
+                rusqlite::params![ts, src, kind],
+            )
+            .unwrap();
+        };
+        // c1: three recent events; c2: one. One stale event excluded by the window.
+        ins(now - 30, "c1", "start");
+        ins(now - 20, "c1", "die");
+        ins(now - 10, "c1", "start");
+        ins(now - 5, "c2", "restart");
+        ins(now - 100_000, "c1", "create"); // older than cutoff
+
+        let cutoff = now - 600;
+        let g = recent_events(&conn, cutoff, 2).unwrap();
+        let c1 = &g["c1"];
+        assert_eq!(c1.len(), 2); // per-source cap honored
+        assert_eq!(c1[0].kind, "start"); // newest-first
+        assert_eq!(c1[0].ts, now - 10);
+        assert_eq!(g["c2"].len(), 1);
+        assert!(!g.values().flatten().any(|e| e.kind == "create")); // stale dropped
     }
 
     #[test]

@@ -10,6 +10,17 @@ pub struct Sample {
     pub value: f64,
 }
 
+/// One Docker lifecycle event — one row in the `events` table. `source` is the
+/// container id (joins the overview grid like a Sample); `payload` is a short human
+/// detail (exit code, health word), empty when the action needs none.
+#[derive(Debug, Clone, Serialize)]
+pub struct Event {
+    pub ts: i64,
+    pub source: String,
+    pub kind: String,
+    pub payload: String,
+}
+
 /// One probe outcome. `target` rides along for alert labelling; only ts/check_id/
 /// up/latency_ms are persisted to `check_results`.
 #[derive(Debug, Clone)]

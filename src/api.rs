@@ -21,6 +21,9 @@ use tokio::sync::{broadcast, mpsc};
 use tokio_stream::wrappers::BroadcastStream;
 
 const KEEPALIVE_SECS: u64 = 15;
+// Overview event feed: how far back to look and how many to show per container.
+const EVENTS_WINDOW_SECS: i64 = 24 * 3600;
+const EVENTS_PER_CONTAINER: usize = 3;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -65,6 +68,8 @@ struct ContainerRow {
     mem: Option<f64>,
     mem_limit: Option<f64>,
     created: i64,
+    // Recent lifecycle events (start/die/restart/…), newest-first.
+    events: Vec<db::EventRow>,
 }
 
 /// Container grid: bollard list merged with the latest persisted cpu/ram.
@@ -75,9 +80,13 @@ async fn overview(State(st): State<AppState>) -> Result<impl IntoResponse, Statu
         .await
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
     let db = st.db_read.clone();
-    let latest = tokio::task::spawn_blocking(move || {
+    let (latest, mut events) = tokio::task::spawn_blocking(move || {
         let conn = db.lock().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        db::latest_samples(&conn).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+        let latest = db::latest_samples(&conn).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let cutoff = now_ts() - EVENTS_WINDOW_SECS;
+        let events = db::recent_events(&conn, cutoff, EVENTS_PER_CONTAINER)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        Ok::<_, StatusCode>((latest, events))
     })
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)??;
@@ -95,6 +104,7 @@ async fn overview(State(st): State<AppState>) -> Result<impl IntoResponse, Statu
                 cpu: g("cpu"),
                 mem: g("mem"),
                 mem_limit: g("mem_limit"),
+                events: events.remove(&c.id).unwrap_or_default(),
                 id: c.id,
                 name: c.name,
                 state: c.state,

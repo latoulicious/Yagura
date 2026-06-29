@@ -1,8 +1,10 @@
-use crate::collector::{Collector, Sample, now_ts};
+use crate::collector::{Collector, Event, Sample, now_ts};
 use anyhow::Result;
 use bollard::Docker;
 use bollard::container::LogOutput;
-use bollard::models::{ContainerStatsResponse, ContainerSummaryStateEnum};
+use bollard::models::{
+    ContainerStatsResponse, ContainerSummaryStateEnum, EventMessage, EventMessageTypeEnum,
+};
 use bollard::query_parameters::{
     ListContainersOptionsBuilder, LogsOptionsBuilder, StatsOptionsBuilder,
 };
@@ -84,6 +86,57 @@ impl DockerCollector {
             .logs(id, Some(opts))
             .filter_map(|res| async move { res.ok().map(line_of) })
     }
+
+    /// Stream container lifecycle events (start/die/restart/oom/health…). Yields one
+    /// `Event` per interesting container action; exec/attach/image noise is dropped.
+    // Client-side filter (events(None) returns every object type); add a server-side
+    // type=container filter only if event volume ever shows up in profiling.
+    pub fn events(&self) -> impl Stream<Item = Event> + '_ {
+        self.docker
+            .events(None)
+            .filter_map(|res| async move { res.ok().and_then(container_event) })
+    }
+}
+
+/// Container lifecycle actions worth surfacing. Excludes the high-noise ones
+/// (`exec_*`, `attach`, `top`, `create`/`destroy`) so the overview feed stays calm.
+const INTERESTING: &[&str] = &[
+    "start", "die", "stop", "kill", "restart", "oom", "pause", "unpause", "health_status",
+];
+
+/// Map a raw daemon event to an `Event`, or `None` if it's not an interesting
+/// container action. `health_status: healthy` splits into kind + payload.
+fn container_event(ev: EventMessage) -> Option<Event> {
+    if ev.typ != Some(EventMessageTypeEnum::CONTAINER) {
+        return None;
+    }
+    let action = ev.action?;
+    let (kind, detail) = match action.split_once(':') {
+        Some((k, v)) => (k.trim().to_string(), v.trim().to_string()),
+        None => (action, String::new()),
+    };
+    if !INTERESTING.contains(&kind.as_str()) {
+        return None;
+    }
+    let actor = ev.actor?;
+    let id = actor.id?;
+    let attrs = actor.attributes.unwrap_or_default();
+    // Prefer the action's own detail (health word); else surface exit code / signal.
+    let payload = if !detail.is_empty() {
+        detail
+    } else if kind == "die" {
+        attrs.get("exitCode").map(|c| format!("exit {c}")).unwrap_or_default()
+    } else if kind == "kill" {
+        attrs.get("signal").map(|s| format!("signal {s}")).unwrap_or_default()
+    } else {
+        String::new()
+    };
+    Some(Event {
+        ts: ev.time.unwrap_or_else(now_ts),
+        source: id,
+        kind,
+        payload,
+    })
 }
 
 impl Collector for DockerCollector {
@@ -229,5 +282,43 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(cpu_percent(&stat), 0.0);
+    }
+
+    use bollard::models::EventActor;
+    use std::collections::HashMap;
+
+    fn ev(typ: EventMessageTypeEnum, action: &str, attrs: &[(&str, &str)]) -> EventMessage {
+        EventMessage {
+            typ: Some(typ),
+            action: Some(action.into()),
+            actor: Some(EventActor {
+                id: Some("c1".into()),
+                attributes: Some(
+                    attrs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect::<HashMap<_, _>>(),
+                ),
+            }),
+            time: Some(100),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn maps_die_with_exit_code() {
+        let e = container_event(ev(EventMessageTypeEnum::CONTAINER, "die", &[("exitCode", "137")])).unwrap();
+        assert_eq!(e.source, "c1");
+        assert_eq!(e.kind, "die");
+        assert_eq!(e.payload, "exit 137");
+        assert_eq!(e.ts, 100);
+    }
+
+    #[test]
+    fn parses_health_status_and_filters_noise() {
+        let h = container_event(ev(EventMessageTypeEnum::CONTAINER, "health_status: unhealthy", &[])).unwrap();
+        assert_eq!(h.kind, "health_status");
+        assert_eq!(h.payload, "unhealthy");
+        // exec/attach chatter is dropped.
+        assert!(container_event(ev(EventMessageTypeEnum::CONTAINER, "exec_start: /bin/sh", &[])).is_none());
+        // non-container objects (image pull, network connect) are dropped.
+        assert!(container_event(ev(EventMessageTypeEnum::IMAGE, "pull", &[])).is_none());
     }
 }
