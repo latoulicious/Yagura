@@ -1,0 +1,62 @@
+syntax = "proto3";
+
+// Localhost control channel between Yagura (read plane, Rust/tonic client) and
+// the Tsugi agent (write plane, Go/grpc-go server).
+package tsugi.agent.v1;
+
+option go_package = "github.com/latoulicious/Tsugi/internal/agentpb;agentpb";
+
+// Yagura observes, Tsugi acts. Reads are unary; deploy actions server-stream the
+// build/deploy log so Yagura can relay it to the browser as SSE.
+service TsugiAgent {
+  rpc ListReleases(ListReleasesReq) returns (ListReleasesResp);
+  rpc ListDeployments(ListDeploymentsReq) returns (ListDeploymentsResp);
+
+  rpc Deploy(DeployReq) returns (stream LogLine);
+  rpc Rollback(DeployReq) returns (stream LogLine);
+  rpc Promote(DeployReq) returns (stream LogLine);
+}
+
+// A release as deployed to one environment (denormalized release ⨝ deployment).
+message Release {
+  string env = 1; // staging | production
+  string service = 2;
+  string commit = 3;
+  string tag = 4; // version tag, e.g. v1.2.3
+  int64 deployed_at = 5; // unix seconds; 0 if never deployed
+  string status = 6; // release vocab: created/staging/production/archived
+}
+
+// One deployment-history record: a release deployed to an environment.
+message Deployment {
+  string env = 1; // staging | production
+  string service = 2;
+  string commit = 3;
+  string status = 4; // deployment vocab: pending/succeeded/failed
+  int64 deployed_at = 5; // unix seconds
+}
+
+// Shared by Deploy/Rollback/Promote. Rollback: commit = target (unset = previous).
+// Promote: env = destination environment for the given commit.
+message DeployReq {
+  string service = 1;
+  string env = 2;
+  optional string commit = 3; // explicit presence: unset ≠ "" (F-042)
+}
+
+// One line of streamed build/deploy output.
+message LogLine {
+  int64 ts = 1; // unix millis
+  string stream = 2; // stdout | stderr
+  string text = 3;
+}
+
+message ListReleasesReq {}
+message ListReleasesResp {
+  repeated Release releases = 1;
+}
+
+message ListDeploymentsReq {}
+message ListDeploymentsResp {
+  repeated Deployment deployments = 1;
+}

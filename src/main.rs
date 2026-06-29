@@ -1,3 +1,4 @@
+mod agent;
 mod alert;
 mod api;
 mod beat;

@@ -11,9 +11,10 @@ RUN pnpm build
 
 # 2. Build the static binary (rust:alpine targets musl by default → fully static).
 FROM rust:1-alpine AS build
-RUN apk add --no-cache musl-dev gcc make
+RUN apk add --no-cache musl-dev gcc make protobuf protobuf-dev
 WORKDIR /src
-COPY Cargo.toml Cargo.lock ./
+COPY Cargo.toml Cargo.lock build.rs ./
+COPY proto ./proto
 COPY src ./src
 COPY --from=web /web/dist ./web/dist
 RUN cargo build --release
