@@ -37,9 +37,9 @@ async fn main() -> anyhow::Result<()> {
 
     let bind = std::env::var("YAGURA_BIND").unwrap_or_else(|_| "127.0.0.1:8080".into());
     let db_path = std::env::var("YAGURA_DB").unwrap_or_else(|_| "yagura.db".into());
-    // Localhost Tsugi agent. Lazy dial — fine if it's not up yet.
+    // Localhost Tsugi agent (its TSUGI_AGENT_ADDR). Lazy dial — fine if it's not up yet.
     let tsugi_addr =
-        std::env::var("YAGURA_TSUGI_ADDR").unwrap_or_else(|_| "http://127.0.0.1:50051".into());
+        std::env::var("YAGURA_TSUGI_ADDR").unwrap_or_else(|_| "http://127.0.0.1:8091".into());
 
     let writer = db::spawn_writer(&db_path)?;
     let db_read = Arc::new(Mutex::new(db::open_read(&db_path)?));
