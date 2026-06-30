@@ -40,6 +40,9 @@ async fn main() -> anyhow::Result<()> {
     // Localhost Tsugi agent (its TSUGI_AGENT_ADDR). Lazy dial — fine if it's not up yet.
     let tsugi_addr =
         std::env::var("YAGURA_TSUGI_ADDR").unwrap_or_else(|_| "http://127.0.0.1:8091".into());
+    // Write plane stays off unless explicitly enabled — see api::AppState.deploy_enabled.
+    let deploy_enabled = std::env::var("YAGURA_DEPLOY_ENABLED")
+        .is_ok_and(|v| matches!(v.as_str(), "1" | "true"));
 
     let writer = db::spawn_writer(&db_path)?;
     let db_read = Arc::new(Mutex::new(db::open_read(&db_path)?));
@@ -77,6 +80,7 @@ async fn main() -> anyhow::Result<()> {
         beats,
         versions: versions_state,
         tsugi,
+        deploy_enabled,
     });
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     tracing::info!("yagura listening on {bind}");

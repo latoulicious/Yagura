@@ -42,10 +42,13 @@ pub struct AppState {
     pub versions: Arc<Mutex<Vec<version::VersionStatus>>>,
     // gRPC client to the localhost Tsugi agent — release history.
     pub tsugi: agent::TsugiClient,
+    // Whether the write endpoints (/api/deploy|rollback) are mounted. Default off —
+    // a popped, tunneled Yagura must not reach a deploy path until 5.5 wires Access.
+    pub deploy_enabled: bool,
 }
 
 pub fn router(state: AppState) -> Router {
-    Router::new()
+    let mut router = Router::new()
         .route("/api/overview", get(overview))
         .route("/api/logs/{id}", get(logs))
         .route("/api/stream", get(stream))
@@ -57,9 +60,14 @@ pub fn router(state: AppState) -> Router {
         .route("/api/beats", get(beats_list))
         .route("/api/versions", get(versions_list))
         .route("/api/releases", get(releases_list))
-        .route("/beat/{name}", post(beat))
-        .fallback(static_handler)
-        .with_state(state)
+        .route("/beat/{name}", post(beat));
+    // Write plane: only mounted when explicitly enabled (see AppState.deploy_enabled).
+    if state.deploy_enabled {
+        router = router
+            .route("/api/deploy", post(deploy))
+            .route("/api/rollback", post(rollback));
+    }
+    router.fallback(static_handler).with_state(state)
 }
 
 #[derive(Serialize)]
@@ -149,13 +157,92 @@ async fn versions_list(State(st): State<AppState>) -> Result<impl IntoResponse, 
 /// state instead of failing the fetch. Calm-until-broken.
 async fn releases_list(State(st): State<AppState>) -> impl IntoResponse {
     match st.tsugi.list_releases().await {
-        Ok(releases) => Json(serde_json::json!({ "ok": true, "releases": releases })),
+        Ok(releases) => Json(serde_json::json!({
+            "ok": true,
+            "releases": releases,
+            "deploy_enabled": st.deploy_enabled,
+        })),
         Err(status) => Json(serde_json::json!({
             "ok": false,
             "releases": [],
+            "deploy_enabled": st.deploy_enabled,
             "reason": format!("{:?}", status.code()),
         })),
     }
+}
+
+#[derive(Deserialize)]
+struct DeployBody {
+    service: String,
+    env: String,
+    commit: String,
+}
+
+/// Validate the request at the trust boundary before relaying to the privileged
+/// agent: commit must be a bare git SHA (mirrors Tsugi's guard + deploy.sh).
+fn check_deploy(body: DeployBody) -> Result<(String, String, String), StatusCode> {
+    let service = body.service.trim();
+    let env = body.env.trim();
+    let commit = body.commit.trim();
+    let hex = (7..=40).contains(&commit.len()) && commit.bytes().all(|b| b.is_ascii_hexdigit());
+    if service.is_empty() || env.is_empty() || !hex {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    // Forward the trimmed values so the deploy payload matches what was validated.
+    Ok((service.to_string(), env.to_string(), commit.to_string()))
+}
+
+/// SSE: promote a staging release to production via the Tsugi agent, relaying its
+/// streamed deploy log. Only mounted when `deploy_enabled`.
+async fn deploy(
+    State(st): State<AppState>,
+    Json(body): Json<DeployBody>,
+) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, StatusCode> {
+    let (service, env, commit) = check_deploy(body)?;
+    Ok(relay(st.tsugi.promote(service, env, commit).await))
+}
+
+/// SSE: roll back to an archived release via the Tsugi agent, relaying its log.
+async fn rollback(
+    State(st): State<AppState>,
+    Json(body): Json<DeployBody>,
+) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, StatusCode> {
+    let (service, env, commit) = check_deploy(body)?;
+    Ok(relay(st.tsugi.rollback(service, env, commit).await))
+}
+
+/// Relay a gRPC deploy stream to SSE; a gRPC/transport error surfaces as a final
+/// stderr line so the UI shows why instead of the stream just ending.
+fn relay(
+    stream: Result<tonic::Streaming<agent::LogLine>, tonic::Status>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let body = async_stream::stream! {
+        match stream {
+            Ok(mut s) => loop {
+                match s.message().await {
+                    Ok(Some(line)) => {
+                        if let Ok(json) = serde_json::to_string(&agent::DeployLine::from(line)) {
+                            yield Ok(Event::default().data(json));
+                        }
+                    }
+                    Ok(None) => break,
+                    Err(status) => {
+                        yield Ok(deploy_err(&format!("{:?}: {}", status.code(), status.message())));
+                        break;
+                    }
+                }
+            },
+            Err(status) => {
+                yield Ok(deploy_err(&format!("{:?}: {}", status.code(), status.message())));
+            }
+        }
+    };
+    Sse::new(body).keep_alive(KeepAlive::new().interval(Duration::from_secs(KEEPALIVE_SECS)))
+}
+
+/// A DeployLine-shaped error frame so the client renders it like any other line.
+fn deploy_err(msg: &str) -> Event {
+    Event::default().data(serde_json::json!({ "ts": 0, "stream": "stderr", "text": msg }).to_string())
 }
 
 /// Heartbeat ingest — a registered job checks in; stamp receipt time for the deadman.

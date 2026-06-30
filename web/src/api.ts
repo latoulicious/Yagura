@@ -70,13 +70,68 @@ export type Release = {
 }
 
 // ok:false = Tsugi agent unreachable (down / RPC unimplemented), distinct from an
-// empty list — the Deploy tab renders the two differently.
-export type Releases = { ok: boolean; releases: Release[]; reason?: string }
+// empty list — the Deploy tab renders the two differently. deploy_enabled gates the
+// action buttons (mirrors YAGURA_DEPLOY_ENABLED on the server).
+export type Releases = { ok: boolean; releases: Release[]; deploy_enabled: boolean; reason?: string }
 
 export async function fetchReleases(): Promise<Releases> {
   const r = await fetch('/api/releases')
   if (!r.ok) throw new Error(`releases ${r.status}`)
   return r.json()
+}
+
+export type DeployLine = { ts: number; stream: string; text: string }
+
+// POST a deploy/rollback and stream its SSE response. EventSource is GET-only, so we
+// read the POST body and parse SSE frames ourselves. Resolves when the stream ends.
+export async function streamDeploy(
+  path: '/api/deploy' | '/api/rollback',
+  body: { service: string; env: string; commit: string },
+  onLine: (l: DeployLine) => void,
+): Promise<void> {
+  const r = await fetch(path, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!r.ok || !r.body) throw new Error(`deploy ${r.status}`)
+  const reader = r.body.getReader()
+  const decoder = new TextDecoder()
+  let buf = ''
+
+  // A frame's data: lines hold one JSON DeployLine; keep-alive comment frames have none.
+  const emit = (frame: string) => {
+    const data = frame
+      .split('\n')
+      .filter((l) => l.startsWith('data:'))
+      .map((l) => l.slice(5).trim())
+      .join('\n')
+    if (!data) return
+    try {
+      onLine(JSON.parse(data))
+    } catch {
+      // ignore non-JSON frames
+    }
+  }
+  // SSE frames are blank-line delimited; normalize CRLF so both line endings split.
+  const drain = () => {
+    buf = buf.replace(/\r\n/g, '\n')
+    let sep
+    while ((sep = buf.indexOf('\n\n')) !== -1) {
+      emit(buf.slice(0, sep))
+      buf = buf.slice(sep + 2)
+    }
+  }
+
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buf += decoder.decode(value, { stream: true })
+    drain()
+  }
+  buf += decoder.decode() // flush any buffered multibyte tail
+  drain()
+  if (buf.trim()) emit(buf) // a final frame with no trailing blank line
 }
 
 export async function fetchHostHistory(): Promise<HostSeries> {
